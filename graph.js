@@ -1,33 +1,31 @@
 
-// Entry point: load JSON file and initialize graph
 const dataUrl = './clang.json';
-let fullData = {}; // Holds the entire JSON content
+let fullData = {};
+let network;
+const THRESHOLD = 10;
+const nameToIdMap = [];
+const fieldVisibility = {}; // New: type → { field → boolean }
 
 const container = document.getElementById('network');
-let network;
-const THRESHOLD = 10; // Maximum nodes shown initially per group
-const nameToIdMap = []; // Search entries
 
-// Fetch and process the JSON file
+// Entry point
 fetch(dataUrl)
   .then(res => res.json())
   .then(json => {
     fullData = json;
-    console.log('Loaded nodes:', Object.keys(json).length);
-    buildIncomingReferences(json); // Precompute incoming references
-    buildSearchIndex(json);       // Prepare search index
+    buildIncomingReferences(json);
+    buildSearchIndex(json);
+    buildFieldPanel(json); // ← New
     const rootId = Object.keys(json)[0];
-    showSubgraph(rootId, true);         // Start with first node
+    showSubgraph(rootId, true);
   });
 
-// Precompute incoming references as { id, field }
 function buildIncomingReferences(data) {
   for (const obj of Object.values(data)) {
     if (!obj.__meta) obj.__meta = {};
     obj.__meta.incoming = [];
   }
 
-  let refCount = 0;
   for (const [id, obj] of Object.entries(data)) {
     for (const [key, val] of Object.entries(obj)) {
       if (Array.isArray(val)) {
@@ -36,7 +34,6 @@ function buildIncomingReferences(data) {
             const refId = item.__ref;
             if (refId in data) {
               data[refId].__meta.incoming.push({ id, field: key });
-              refCount++;
             }
           }
         }
@@ -44,12 +41,10 @@ function buildIncomingReferences(data) {
         const refId = val.__ref;
         if (refId in data) {
           data[refId].__meta.incoming.push({ id, field: key });
-          refCount++;
         }
       }
     }
   }
-  console.log('Total references indexed:', refCount);
 }
 
 function makeLabel(id, obj, isExpanded = false, isProxy = false) {
@@ -59,7 +54,7 @@ function makeLabel(id, obj, isExpanded = false, isProxy = false) {
   const name = obj.name || obj.displayname || obj.spelling || '';
   const line1 = name ? name : '';
   const line2 = `(${id}::${type}${kindShort ? '/' + kindShort : ''})`;
-  let header = line1 ? `${line1}\n${line2}` : line2;
+  const header = line1 ? `${line1}\n${line2}` : line2;
   if (!isExpanded) return header;
 
   const fields = Object.entries(obj)
@@ -75,7 +70,7 @@ function makeLabel(id, obj, isExpanded = false, isProxy = false) {
       }
     });
 
-  return [header, ...fields].filter(Boolean).join('\n');
+  return [header, ...fields].join('\n');
 }
 
 function getTypeColor(type) {
@@ -91,16 +86,80 @@ function getTypeColor(type) {
   return palette[type] || '#E0E0E0';
 }
 
+function shouldExpandField(type, field) {
+  return !fieldVisibility[type] || fieldVisibility[type][field];
+}
+
+function buildFieldPanel(data) {
+  const panel = document.getElementById('field-controls');
+  if (!panel) return;
+
+  const typeFields = {};
+
+  for (const obj of Object.values(data)) {
+    const type = obj.__meta?.type;
+    if (!type) continue;
+    if (!typeFields[type]) typeFields[type] = new Set();
+
+    for (const key of Object.keys(obj)) {
+      if (key === '__meta') continue;
+      const val = obj[key];
+      if ((Array.isArray(val) && val.some(x => typeof x === 'object' && x?.__ref)) ||
+          (val && typeof val === 'object' && '__ref' in val)) {
+        typeFields[type].add(key);
+      }
+    }
+  }
+
+  for (const [type, fields] of Object.entries(typeFields)) {
+    fieldVisibility[type] = {};
+    const box = document.createElement('div');
+    box.style.marginBottom = '0.5em';
+    const title = document.createElement('div');
+    title.textContent = type;
+    title.style.fontWeight = 'bold';
+    box.appendChild(title);
+
+    for (const field of Array.from(fields).sort()) {
+      fieldVisibility[type][field] = true;
+      const label = document.createElement('label');
+      label.style.marginRight = '1em';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = true;
+      input.onchange = () => {
+        fieldVisibility[type][field] = input.checked;
+        updateEdgesByField(type, field, input.checked);
+      };
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(' ' + field));
+      box.appendChild(label);
+    }
+
+    panel.appendChild(box);
+  }
+}
+
+function updateEdgesByField(type, field, visible) {
+  const allEdges = network.body.data.edges.get();
+  for (const edge of allEdges) {
+    const fromNode = network.body.data.nodes.get(edge.from);
+    const toNode = network.body.data.nodes.get(edge.to);
+    const fromId = fromNode?.sourceId || fromNode?.id;
+    const fieldMatch = edge.label === field && fullData[fromId]?.__meta?.type === type;
+    if (fieldMatch) {
+      if (visible) {
+        network.body.data.edges.add(edge);
+      } else {
+        network.body.data.edges.remove(edge.id);
+      }
+    }
+  }
+}
+
 function showSubgraph(centerId, clear = true) {
-  console.clear();
-  console.log('Opening node:', centerId);
-
   const addedNodes = new Set(clear ? [] : network.body.data.nodes.getIds());
-  const addedEdges = new Set(clear ? [] : network.body.data.edges.getIds().map(eid => {
-    const e = network.body.data.edges.get(eid);
-    return `${e.from}->${e.to}`;
-  }));
-
+  const addedEdges = new Set(clear ? [] : network.body.data.edges.get().map(e => `${e.from}->${e.to}`));
   const nodeItems = clear ? [] : network.body.data.nodes.get();
   const edgeItems = clear ? [] : network.body.data.edges.get();
 
@@ -124,13 +183,14 @@ function showSubgraph(centerId, clear = true) {
   const obj = fullData[centerId];
 
   for (const [key, val] of Object.entries(obj)) {
+    if (!shouldExpandField(obj.__meta?.type, key)) continue;
+
     if (Array.isArray(val)) {
       const virtualId = `${centerId}::field::${key}`;
       if (!addedNodes.has(virtualId)) {
         const allRefs = val.filter(v => v && typeof v === 'object' && '__ref' in v).map(v => v.__ref);
         const initial = allRefs.slice(0, THRESHOLD);
         const remaining = allRefs.slice(THRESHOLD);
-
         nodeItems.push({ id: virtualId, label: `[${key}]${remaining.length > 0 ? '…' : ''}`, color: '#eeeeee', proxy: true, isExpanded: false, remaining, sourceId: centerId, field: key });
         edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
       }
@@ -149,7 +209,7 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
-  const incoming = fullData[centerId].__meta.incoming || [];
+  const incoming = obj.__meta?.incoming || [];
   if (incoming.length > THRESHOLD) {
     const virtualId = `${centerId}::incoming`;
     const initial = incoming.slice(0, THRESHOLD);
@@ -186,9 +246,7 @@ function showSubgraph(centerId, clear = true) {
       const nodeId = params.nodes[0];
       const node = network.body.data.nodes.get(nodeId);
       if (!node) return;
-      if (network.isCluster(nodeId)) {
-        network.openCluster(nodeId);
-      } else if (node.proxy) {
+      if (node.proxy) {
         expandProxyNode(nodeId);
       } else {
         showSubgraph(nodeId, true);
