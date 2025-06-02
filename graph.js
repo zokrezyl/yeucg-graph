@@ -5,7 +5,7 @@ let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const CLUSTER_THRESHOLD = 10; // Lower threshold for performance
+const CLUSTER_THRESHOLD = 10; // Lowered for testing
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -52,7 +52,8 @@ function buildIncomingReferences(data) {
 
 function makeLabel(id, obj) {
   const type = obj.__meta?.type || '?';
-  return `${id}\n(${type})`;
+  const name = obj.name || obj.displayname || id;
+  return `${name}\n(${type})`;
 }
 
 function getTypeColor(type) {
@@ -76,6 +77,7 @@ function showSubgraph(centerId) {
   const addedEdges = new Set();
   const nodeItems = [];
   const edgeItems = [];
+  const outgoingGroups = {}; // group outgoing refs by field
   const virtualFieldNodes = new Set();
 
   function addNode(id) {
@@ -116,13 +118,12 @@ function showSubgraph(centerId) {
 
       let count = 0;
       for (const item of val) {
-        if (count >= CLUSTER_THRESHOLD) break;
         if (item && typeof item === 'object' && '__ref' in item) {
           const refId = item.__ref;
           if (!(refId in fullData)) continue;
+          if (++count > CLUSTER_THRESHOLD) continue;
           addNode(refId);
           addEdge(virtualId, refId);
-          count++;
           totalOutgoing++;
         }
       }
@@ -138,17 +139,15 @@ function showSubgraph(centerId) {
 
   const incoming = fullData[centerId].__meta.incoming || [];
   if (incoming.length > CLUSTER_THRESHOLD) {
-    const proxyId = `${centerId}::incoming`;
-    nodeItems.push({ id: proxyId, label: '[incoming]', color: '#ddffdd' });
+    const proxyId = `${centerId}::incoming-proxy`;
+    nodeItems.push({ id: proxyId, label: '[incoming]', color: '#ccffcc' });
     edgeItems.push({ from: proxyId, to: centerId, arrows: 'to' });
-
     let count = 0;
     for (const { from, via } of incoming) {
-      if (count >= CLUSTER_THRESHOLD) break;
       if (!(from in fullData)) continue;
+      if (++count > CLUSTER_THRESHOLD) continue;
       addNode(from);
       addEdge(from, proxyId, via);
-      count++;
     }
   } else {
     for (const { from, via } of incoming) {
@@ -181,6 +180,5 @@ function showSubgraph(centerId) {
   }
 
   console.log('Network updated with new subgraph');
-
   network.moveTo({ scale: 1.0 });
 }
