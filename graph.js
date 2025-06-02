@@ -1,12 +1,10 @@
 
 const dataUrl = './clang.json';
 let fullData = {};
-let nodes = new vis.DataSet();
-let edges = new vis.DataSet();
 
 const container = document.getElementById('network');
-const network = new vis.Network(container, { nodes, edges }, {
-  layout: { improvedLayout: true },
+const network = new vis.Network(container, { nodes: [], edges: [] }, {
+  layout: { improvedLayout: false },
   interaction: { hover: true },
   physics: { stabilization: true },
 });
@@ -73,9 +71,9 @@ function getTypeColor(type) {
 function showSubgraph(centerId) {
   console.clear();
   console.log('Opening node:', centerId);
-  nodes.clear();
-  edges.clear();
 
+  const nodeItems = [];
+  const edgeItems = [];
   const addedNodes = new Set();
   const addedEdges = new Set();
 
@@ -84,14 +82,14 @@ function showSubgraph(centerId) {
     addedNodes.add(id);
     const obj = fullData[id];
     const type = obj?.__meta?.type || '?';
-    nodes.add({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
+    nodeItems.push({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
   }
 
   function addEdge(from, to) {
     const key = `${from}->${to}`;
     if (addedEdges.has(key)) return;
     addedEdges.add(key);
-    edges.add({ from, to, arrows: 'to' });
+    edgeItems.push({ from, to, arrows: 'to' });
   }
 
   if (!(centerId in fullData)) {
@@ -102,7 +100,7 @@ function showSubgraph(centerId) {
   const obj = fullData[centerId];
   addNode(centerId);
 
-  console.log('Processing node: refs', centerId);
+  console.log('Processing node:', centerId, obj);
   for (const val of Object.values(obj)) {
     if (Array.isArray(val)) {
       for (const item of val) {
@@ -122,23 +120,27 @@ function showSubgraph(centerId) {
       }
     }
   }
+  console.log('Done addinng refs:', centerId, obj);
 
-  console.log('Done: Processing node: refs', centerId);
   const incoming = fullData[centerId].__meta.incoming || new Set();
   for (const fromId of incoming) {
     if (!(fromId in fullData)) continue;
     addNode(fromId);
     addEdge(fromId, centerId);
   }
+  console.log('Done addinng incomming:', centerId, obj);
 
-  console.log('Done Processing node:', centerId);
-  network.setData({ nodes: new vis.DataSet([...nodes]), edges: new vis.DataSet([...edges]) });
-  network.fit({ nodes: [centerId], animation: false });
+  network.setData({
+    nodes: new vis.DataSet(nodeItems),
+    edges: new vis.DataSet(edgeItems),
+  });
+
+
+  console.log('Done addinng nodes to the visual:', centerId, obj);
+ network.moveTo({ scale: 0.5 }); 
+  console.log('Done network moveTo :', centerId, obj);
+
 }
-
-
-
-
 
 network.on('doubleClick', function (params) {
   if (params.nodes.length > 0) {
