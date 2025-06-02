@@ -5,7 +5,8 @@ let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const OUTGOING_THRESHOLD = 1000; // Only add some refs if too many
+const OUTGOING_THRESHOLD = 10; // Only show this many refs per array
+const INCOMING_THRESHOLD = 10; // Only show this many incoming refs
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -76,6 +77,7 @@ function showSubgraph(centerId) {
   const addedEdges = new Set();
   const nodeItems = [];
   const edgeItems = [];
+  const virtualFieldNodes = new Set();
 
   function addNode(id) {
     if (addedNodes.has(id)) return;
@@ -109,13 +111,14 @@ function showSubgraph(centerId) {
       const virtualId = `${centerId}::field::${key}`;
       nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee' });
       edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
+      virtualFieldNodes.add(virtualId);
 
       let count = 0;
       for (const item of val) {
         if (item && typeof item === 'object' && '__ref' in item) {
+          if (count++ >= OUTGOING_THRESHOLD) break;
           const refId = item.__ref;
           if (!(refId in fullData)) continue;
-          if (count++ >= OUTGOING_THRESHOLD) break;
           addNode(refId);
           addEdge(virtualId, refId);
         }
@@ -130,13 +133,24 @@ function showSubgraph(centerId) {
   }
 
   const incoming = fullData[centerId].__meta.incoming || new Set();
-  for (const fromId of incoming) {
-    if (!(fromId in fullData)) continue;
-    addNode(fromId);
-    addEdge(fromId, centerId);
+  if (incoming.size > INCOMING_THRESHOLD) {
+    const virtualIncomingId = `${centerId}::virtual::incoming`;
+    nodeItems.push({ id: virtualIncomingId, label: '[incoming]', color: '#dddddd' });
+    edgeItems.push({ from: virtualIncomingId, to: centerId, arrows: 'to', label: 'incoming' });
+    let count = 0;
+    for (const fromId of incoming) {
+      if (!(fromId in fullData)) continue;
+      if (count++ >= INCOMING_THRESHOLD) break;
+      addNode(fromId);
+      addEdge(fromId, virtualIncomingId);
+    }
+  } else {
+    for (const fromId of incoming) {
+      if (!(fromId in fullData)) continue;
+      addNode(fromId);
+      addEdge(fromId, centerId);
+    }
   }
-
-  console.log(`Total nodes: ${addedNodes.size}, edges: ${addedEdges.size}`);
 
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
@@ -158,6 +172,5 @@ function showSubgraph(centerId) {
     });
   }
 
-  console.log('Network updated with new subgraph');
   network.moveTo({ scale: 1.0 });
 }
