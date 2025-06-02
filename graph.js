@@ -74,6 +74,7 @@ function showSubgraph(centerId) {
   const nodeItems = [];
   const edgeItems = [];
   const clusterGroups = {};
+  const clusteredNodeIds = new Set();
 
   function addNode(id) {
     if (addedNodes.has(id)) return;
@@ -128,18 +129,26 @@ function showSubgraph(centerId) {
   const totalOut = outgoingRefs.length;
 
   for (const [kind, members] of Object.entries(clusterGroups)) {
-    for (const id of members) {
-      addNode(id);
-      addEdge(centerId, id);
+    if (totalOut > CLUSTER_THRESHOLD && members.length > 1) {
+      for (const id of members) {
+        clusteredNodeIds.add(id);
+      }
+    } else {
+      for (const id of members) {
+        addNode(id);
+        addEdge(centerId, id);
+      }
     }
   }
 
+  /*
   const incoming = fullData[centerId].__meta.incoming || new Set();
   for (const fromId of incoming) {
     if (!(fromId in fullData)) continue;
     addNode(fromId);
     addEdge(fromId, centerId);
   }
+  */ 
 
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
@@ -165,7 +174,6 @@ function showSubgraph(centerId) {
     });
   }
 
-  // Apply clustering after nodes are added
   if (totalOut > CLUSTER_THRESHOLD) {
     for (const [kind, members] of Object.entries(clusterGroups)) {
       if (members.length > 1) {
