@@ -6,6 +6,8 @@ let fullData = {}; // Holds the entire JSON content
 const container = document.getElementById('network');
 let network;
 const THRESHOLD = 10; // Maximum nodes shown initially per group
+let fuseIndex; // Fuse.js index
+const nameToIdMap = []; // Search entries
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -14,8 +16,9 @@ fetch(dataUrl)
     fullData = json;
     console.log('Loaded nodes:', Object.keys(json).length);
     buildIncomingReferences(json); // Precompute incoming references
+    buildSearchIndex(json);       // Prepare search index
     const rootId = Object.keys(json)[0];
-    showSubgraph(rootId); // Start with first node
+    showSubgraph(rootId);         // Start with first node
   });
 
 // Precompute incoming references as { id, field }
@@ -71,6 +74,44 @@ function getTypeColor(type) {
   return palette[type] || '#E0E0E0';
 }
 
+function buildSearchIndex(data) {
+  nameToIdMap.length = 0;
+  for (const [id, obj] of Object.entries(data)) {
+    const type = obj.__meta?.type || '?';
+    const name = obj.name || obj.displayname || obj.spelling || '';
+    const label = name ? `${name} (${type})` : `(${id}::${type})`;
+    nameToIdMap.push({ id, label });
+  }
+
+  fuseIndex = new Fuse(nameToIdMap, {
+    keys: ['label'],
+    threshold: 0.3,
+    includeScore: true,
+  });
+
+  const box = document.getElementById('search-box');
+  const results = document.getElementById('search-results');
+
+  box.addEventListener('input', () => {
+    const query = box.value.trim();
+    results.innerHTML = '';
+    if (!query || !fuseIndex) return;
+
+    const matches = fuseIndex.search(query).slice(0, 10);
+    for (const match of matches) {
+      const li = document.createElement('li');
+      li.textContent = match.item.label;
+      li.style.cursor = 'pointer';
+      li.addEventListener('click', () => {
+        showSubgraph(match.item.id);
+        results.innerHTML = '';
+        box.value = '';
+      });
+      results.appendChild(li);
+    }
+  });
+}
+
 function showSubgraph(centerId) {
   console.clear();
   console.log('Opening node:', centerId);
@@ -109,7 +150,7 @@ function showSubgraph(centerId) {
       const initial = allRefs.slice(0, THRESHOLD);
       const remaining = allRefs.slice(THRESHOLD);
 
-      nodeItems.push({ id: virtualId, label: `[${key}] (${remaining.length} more)`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
+      nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
       edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
 
       for (const refId of initial) {
@@ -131,7 +172,7 @@ function showSubgraph(centerId) {
     const virtualId = `${centerId}::incoming`;
     const initial = incoming.slice(0, THRESHOLD);
     const remaining = incoming.slice(THRESHOLD);
-    nodeItems.push({ id: virtualId, label: `[incoming] (${remaining.length} more)`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
+    nodeItems.push({ id: virtualId, label: `[incoming]`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
     edgeItems.push({ from: virtualId, to: centerId, arrows: 'to', label: '' });
 
     for (const { id: fromId, field } of initial) {
@@ -174,40 +215,6 @@ function showSubgraph(centerId) {
         showSubgraph(nodeId);
       }
     });
-
-    network.on('click', function (params) {
-      if (params.nodes.length === 0) return;
-      const nodeId = params.nodes[0];
-      const node = network.body.data.nodes.get(nodeId);
-
-      if (!node || node.proxy) return;
-      const obj = fullData[nodeId];
-      if (!obj) return;
-
-      if (node.detailed) {
-        node.label = makeLabel(nodeId, obj);
-        node.detailed = false;
-      } else {
-        const lines = [];
-        for (const [key, val] of Object.entries(obj)) {
-          if (typeof val === 'object' && val !== null && '__ref' in val) {
-            lines.push(`${key}: ->`);
-          } else if (Array.isArray(val)) {
-            const isRefArray = val.some(v => v && typeof v === 'object' && '__ref' in v);
-            lines.push(`${key}: ${isRefArray ? '[]->' : '[...]'}`);
-          } else if (typeof val === 'object') {
-            lines.push(`${key}: {...}`);
-          } else {
-            lines.push(`${key}: ${val}`);
-          }
-        }
-        lines.push(`(${nodeId}::${obj.__meta?.type || '?'})`);
-        node.label = lines.join('\n');
-        node.detailed = true;
-      }
-
-      network.body.data.nodes.update(node);
-    });
   }
 
   network.moveTo({ scale: 1.0 });
@@ -222,15 +229,11 @@ function expandProxyNode(id) {
 
   const nextBatch = node.remaining.splice(0, THRESHOLD);
 
-  for (const ref of nextBatch) {
-    let refId = typeof ref === 'string' ? ref : ref.id;
+  for (const refId of nextBatch) {
     if (!(refId in fullData)) continue;
     const obj = fullData[refId];
     newNodes.push({ id: refId, label: makeLabel(refId, obj), color: getTypeColor(obj.__meta?.type || '?') });
-    const from = node.targetId ? refId : id;
-    const to = node.targetId ? id : refId;
-    const label = ref.field || '';
-    newEdges.push({ from, to, arrows: 'to', label });
+    newEdges.push({ from: id, to: refId, arrows: 'to' });
   }
 
   network.body.data.nodes.update({ id, remaining: node.remaining });
@@ -239,8 +242,7 @@ function expandProxyNode(id) {
 
   if (node.remaining.length > 0) {
     const n = network.body.data.nodes.get(id);
-    const parts = n.label.split('(')[0].trim();
-    n.label = `${parts} (${node.remaining.length} more)`;
+    n.label = `${n.label.split('\n')[0]}\n(${node.remaining.length} more…)`;
     network.body.data.nodes.update(n);
   }
 }
