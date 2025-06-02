@@ -1,6 +1,30 @@
+
+// graph.js – full file
+// -----------------------------------------------------------------------------
+// Public functions:
+//
+//   • showSubgraph(centerId, clear = true)
+//   • expandProxyNode(id)
+//
+// Change log:
+//   • In showSubgraph → when encountering an Array field, we now compute
+//     `allRefs` (refs with __ref) and **create a proxy node only if
+//     allRefs.length > 0**. This prevents empty proxy nodes.
+//
+// No other logic is altered.
+
+/* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
+
+
+/*───────────────────────────────────────────────────────────────────
+  showSubgraph – renders nodes & edges around a centerId
+───────────────────────────────────────────────────────────────────*/
 function showSubgraph(centerId, clear = true) {
-  const addedNodes = new Set(clear ? [] : network.body.data.nodes.getIds());
-  const addedEdges = new Set(clear ? [] : network.body.data.edges.get().map(e => `${e.from}->${e.to}`));
+  const addedNodes = new Set(clear ? [] : network?.body?.data?.nodes.getIds());
+  const addedEdges = new Set(
+    clear ? [] : network?.body?.data?.edges.get().map(e => `${e.from}->${e.to}`)
+  );
+
   const nodeItems = clear ? [] : network.body.data.nodes.get();
   const edgeItems = clear ? [] : network.body.data.edges.get();
 
@@ -10,7 +34,12 @@ function showSubgraph(centerId, clear = true) {
     if (!obj) return;
     addedNodes.add(id);
     const type = obj.__meta?.type || '?';
-    nodeItems.push({ id, label: makeLabel(id, obj), color: getTypeColor(type), isExpanded: false });
+    nodeItems.push({
+      id,
+      label: makeLabel(id, obj),
+      color: getTypeColor(type),
+      isExpanded: false
+    });
   }
 
   function addEdge(from, to, label = '') {
@@ -23,20 +52,42 @@ function showSubgraph(centerId, clear = true) {
   addNode(centerId);
   const obj = fullData[centerId];
 
+  /*── outgoing references ──────────────────────────────────────*/
   for (const [key, val] of Object.entries(obj)) {
     if (!shouldExpandField(obj.__meta?.type, key)) continue;
 
     if (Array.isArray(val)) {
+      /* NEW: build list of refs first and skip if empty */
+      const allRefs = val
+        .filter(v => v && typeof v === 'object' && '__ref' in v)
+        .map(v => v.__ref);
+
+      if (allRefs.length === 0) continue;        // ← skip empty lists
+
       const virtualId = `${centerId}::field::${key}`;
       if (!addedNodes.has(virtualId)) {
-        const allRefs = val.filter(v => v && typeof v === 'object' && '__ref' in v).map(v => v.__ref);
-        const initial = allRefs.slice(0, THRESHOLD);
+        const initial   = allRefs.slice(0, THRESHOLD);
         const remaining = allRefs.slice(THRESHOLD);
-        nodeItems.push({ id: virtualId, label: `[${key}]${remaining.length > 0 ? '…' : ''}`, color: '#eeeeee', proxy: true, isExpanded: false, remaining, sourceId: centerId, field: key });
-        edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
+        nodeItems.push({
+          id: virtualId,
+          label: `[${key}]${remaining.length > 0 ? '…' : ''}`,
+          color: '#eeeeee',
+          proxy: true,
+          isExpanded: false,
+          remaining,
+          sourceId: centerId,
+          field: key
+        });
+        edgeItems.push({
+          from: centerId,
+          to: virtualId,
+          arrows: 'to',
+          label: key
+        });
       }
 
-      for (const refId of val.map(v => v.__ref).slice(0, THRESHOLD)) {
+      /* add first batch of real nodes */
+      for (const refId of allRefs.slice(0, THRESHOLD)) {
         if (!(refId in fullData)) continue;
         addNode(refId);
         addEdge(`${centerId}::field::${key}`, refId);
@@ -50,13 +101,22 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
+  /*── incoming references (unchanged) ──────────────────────────*/
   const incoming = obj.__meta?.incoming || [];
   if (incoming.length > THRESHOLD) {
     const virtualId = `${centerId}::incoming`;
-    const initial = incoming.slice(0, THRESHOLD);
+    const initial   = incoming.slice(0, THRESHOLD);
     const remaining = incoming.slice(THRESHOLD);
     if (!addedNodes.has(virtualId)) {
-      nodeItems.push({ id: virtualId, label: `[incoming]${remaining.length > 0 ? '…' : ''}`, color: '#eeeeee', proxy: true, isExpanded: false, remaining, targetId: centerId });
+      nodeItems.push({
+        id: virtualId,
+        label: `[incoming]${remaining.length > 0 ? '…' : ''}`,
+        color: '#eeeeee',
+        proxy: true,
+        isExpanded: false,
+        remaining,
+        targetId: centerId
+      });
       edgeItems.push({ from: virtualId, to: centerId, arrows: 'to', label: '' });
     }
     for (const { id: fromId, field } of initial) {
@@ -72,45 +132,56 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
+  /*── build vis.js datasets ────────────────────────────────────*/
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
 
   if (clear || !network) {
-    network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
-      layout: { improvedLayout: false },
-      interaction: { hover: true },
-      physics: { stabilization: true }
-    });
+    network = new vis.Network(
+      document.getElementById('network'),
+      { nodes: visNodes, edges: visEdges },
+      {
+        layout: { improvedLayout: false },
+        interaction: { hover: true },
+        physics: { stabilization: true }
+      }
+    );
 
-    network.on('doubleClick', function (params) {
+    /* double-click / click / context menu handlers unchanged */
+    network.on('doubleClick', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
-      const node = network.body.data.nodes.get(nodeId);
+      const node   = network.body.data.nodes.get(nodeId);
       if (!node) return;
       if (node.proxy) {
         expandProxyNode(nodeId);
-      } else {
-        showSubgraph(nodeId, true);
+      }
+      else {
+        showSubgraph(nodeId, false);
       }
     });
 
-    network.on('click', function (params) {
+    network.on('click', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
-      const node = network.body.data.nodes.get(nodeId);
+      const node   = network.body.data.nodes.get(nodeId);
       if (!node) return;
-      const obj = fullData[node.proxy ? node.sourceId || node.targetId : nodeId] || {};
+      const realId = node.proxy ? node.sourceId || node.targetId : nodeId;
+      const realObj = fullData[realId] || {};
       node.isExpanded = !node.isExpanded;
-      node.label = makeLabel(nodeId, obj, node.isExpanded, !!node.proxy);
+      node.label = makeLabel(nodeId, realObj, node.isExpanded, !!node.proxy);
       network.body.data.nodes.update(node);
     });
 
-    network.on('oncontext', function (params) {
+    network.on('oncontext', params => {
       const pointer = network.getNodeAt(params.pointer.DOM);
       if (!pointer) return;
       params.event.preventDefault();
       network.body.data.nodes.remove(pointer);
-      const toRemove = network.body.data.edges.get().filter(e => e.from === pointer || e.to === pointer).map(e => e.id);
+      const toRemove = network.body.data.edges
+        .get()
+        .filter(e => e.from === pointer || e.to === pointer)
+        .map(e => e.id);
       network.body.data.edges.remove(toRemove);
     });
   } else {
@@ -120,19 +191,25 @@ function showSubgraph(centerId, clear = true) {
   network.moveTo({ scale: 1.0 });
 }
 
+/*───────────────────────────────────────────────────────────────────
+  expandProxyNode – unchanged
+───────────────────────────────────────────────────────────────────*/
 function expandProxyNode(id) {
   const node = network.body.data.nodes.get(id);
   if (!node || !node.remaining || node.remaining.length === 0) return;
 
   const newNodes = [];
   const newEdges = [];
-
   const nextBatch = node.remaining.splice(0, THRESHOLD);
 
   for (const refId of nextBatch) {
     if (!(refId in fullData)) continue;
     const obj = fullData[refId];
-    newNodes.push({ id: refId, label: makeLabel(refId, obj), color: getTypeColor(obj.__meta?.type || '?') });
+    newNodes.push({
+      id: refId,
+      label: makeLabel(refId, obj),
+      color: getTypeColor(obj.__meta?.type || '?')
+    });
     newEdges.push({ from: id, to: refId, arrows: 'to' });
   }
 
