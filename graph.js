@@ -100,25 +100,22 @@ function showSubgraph(centerId) {
   }
 
   addNode(centerId);
-
   const obj = fullData[centerId];
-  const directRefs = [];
 
+  const outgoingRefs = [];
   for (const val of Object.values(obj)) {
     if (Array.isArray(val)) {
       for (const item of val) {
         if (item && typeof item === 'object' && '__ref' in item) {
-          directRefs.push(item.__ref);
+          outgoingRefs.push(item.__ref);
         }
       }
     } else if (val && typeof val === 'object' && '__ref' in val) {
-      directRefs.push(val.__ref);
+      outgoingRefs.push(val.__ref);
     }
   }
 
-  const useClustering = directRefs.length > CLUSTER_THRESHOLD;
-
-  for (const refId of directRefs) {
+  for (const refId of outgoingRefs) {
     if (!(refId in fullData)) continue;
     const refObj = fullData[refId];
     const kind = refObj.kind || 'Other';
@@ -142,6 +139,8 @@ function showSubgraph(centerId) {
     addEdge(fromId, centerId);
   }
 
+  console.log('Total nodes:', addedNodes.size);
+
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
 
@@ -162,9 +161,9 @@ function showSubgraph(centerId) {
     });
   }
 
-  if (useClustering) {
-    for (const kind of Object.keys(clusterGroups)) {
-      const ids = new Set(clusterGroups[kind]);
+  for (const [kind, members] of Object.entries(clusterGroups)) {
+    if (members.length > CLUSTER_THRESHOLD) {
+      const ids = new Set(members);
       const clusterOptions = {
         joinCondition: function (nodeOptions) {
           return ids.has(nodeOptions.id);
@@ -179,6 +178,8 @@ function showSubgraph(centerId) {
       network.cluster(clusterOptions);
     }
   }
+  console.log('Clusters created:', Object.keys(clusterGroups).length);
+  network.fit();
 
-  network.moveTo({ scale: 1.0 });
+  // network.moveTo({ scale: 1.0 });
 }
