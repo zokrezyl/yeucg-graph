@@ -5,7 +5,7 @@ let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const CLUSTER_THRESHOLD = 1000; // Only cluster if too many refs
+const OUTGOING_THRESHOLD = 1000; // Only add some refs if too many
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -76,9 +76,6 @@ function showSubgraph(centerId) {
   const addedEdges = new Set();
   const nodeItems = [];
   const edgeItems = [];
-  const outgoingClusterGroups = {}; // per field
-  const clusteredOutgoing = new Set();
-  const virtualFieldNodes = new Set();
 
   function addNode(id) {
     if (addedNodes.has(id)) return;
@@ -107,107 +104,38 @@ function showSubgraph(centerId) {
   addNode(centerId);
   const obj = fullData[centerId];
 
-  let totalOutgoing = 0;
-
   for (const [key, val] of Object.entries(obj)) {
     if (Array.isArray(val)) {
       const virtualId = `${centerId}::field::${key}`;
       nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee' });
       edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
-      virtualFieldNodes.add(virtualId);
 
-      const clusterMap = {};
+      let count = 0;
       for (const item of val) {
         if (item && typeof item === 'object' && '__ref' in item) {
           const refId = item.__ref;
           if (!(refId in fullData)) continue;
-          const kind = fullData[refId].kind || 'Other';
-          if (!clusterMap[kind]) clusterMap[kind] = [];
-          clusterMap[kind].push(refId);
-          totalOutgoing++;
+          if (count++ >= OUTGOING_THRESHOLD) break;
+          addNode(refId);
+          addEdge(virtualId, refId);
         }
       }
-      outgoingClusterGroups[virtualId] = clusterMap;
     } else if (val && typeof val === 'object' && '__ref' in val) {
       const refId = val.__ref;
       if (refId in fullData) {
         addNode(refId);
         addEdge(centerId, refId, key);
-        totalOutgoing++;
       }
     }
   }
 
   const incoming = fullData[centerId].__meta.incoming || new Set();
-  const incomingClusterMap = {};
   for (const fromId of incoming) {
     if (!(fromId in fullData)) continue;
-    const kind = fullData[fromId].kind || 'Other';
-    if (!incomingClusterMap[kind]) incomingClusterMap[kind] = [];
-    incomingClusterMap[kind].push(fromId);
+    addNode(fromId);
+    addEdge(fromId, centerId);
   }
 
-  if (totalOutgoing > CLUSTER_THRESHOLD) {
-    for (const [virtualId, clusterMap] of Object.entries(outgoingClusterGroups)) {
-      for (const [kind, members] of Object.entries(clusterMap)) {
-        for (const id of members) {
-          addNode(id);
-        }
-        const ids = new Set(members);
-        const clusterOptions = {
-          joinCondition: function (nodeOptions) {
-            return ids.has(nodeOptions.id);
-          },
-          clusterNodeProperties: {
-            id: `cluster-${virtualId}-${kind}`,
-            label: `Cluster: ${kind}`,
-            allowSingleNodeCluster: false,
-            color: '#ccccff'
-          }
-        };
-        network.cluster(clusterOptions);
-        edgeItems.push({ from: virtualId, to: `cluster-${virtualId}-${kind}`, arrows: 'to' });
-      }
-    }
-  } else {
-    for (const [virtualId, clusterMap] of Object.entries(outgoingClusterGroups)) {
-      for (const members of Object.values(clusterMap)) {
-        for (const id of members) {
-          addNode(id);
-          addEdge(virtualId, id);
-        }
-      }
-    }
-  }
-
-  const totalIncoming = incoming.size;
-  if (totalIncoming > CLUSTER_THRESHOLD) {
-    for (const [kind, members] of Object.entries(incomingClusterMap)) {
-      for (const id of members) {
-        addNode(id);
-      }
-      const ids = new Set(members);
-      const clusterOptions = {
-        joinCondition: function (nodeOptions) {
-          return ids.has(nodeOptions.id);
-        },
-        clusterNodeProperties: {
-          id: `cluster-in-${centerId}-${kind}`,
-          label: `In-Cluster: ${kind}`,
-          allowSingleNodeCluster: false,
-          color: '#ccffcc'
-        }
-      };
-      network.cluster(clusterOptions);
-      edgeItems.push({ from: `cluster-in-${centerId}-${kind}`, to: centerId, arrows: 'to' });
-    }
-  } else {
-    for (const fromId of incoming) {
-      if (!(fromId in fullData)) continue;
-      addNode(fromId);
-      addEdge(fromId, centerId);
-    }
-  }
   console.log(`Total nodes: ${addedNodes.size}, edges: ${addedEdges.size}`);
 
   const visNodes = new vis.DataSet(nodeItems);
@@ -225,16 +153,11 @@ function showSubgraph(centerId) {
     network.on('doubleClick', function (params) {
       if (params.nodes.length > 0) {
         const clickedId = params.nodes[0];
-        if (network.isCluster(clickedId)) {
-          network.openCluster(clickedId);
-        } else {
-          showSubgraph(clickedId);
-        }
+        showSubgraph(clickedId);
       }
     });
   }
 
   console.log('Network updated with new subgraph');
-
   network.moveTo({ scale: 1.0 });
 }
