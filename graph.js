@@ -5,7 +5,7 @@ let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const CLUSTER_THRESHOLD = 10; // Lowered for testing
+const THRESHOLD = 10; // Maximum nodes shown initially per group
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -18,7 +18,7 @@ fetch(dataUrl)
     showSubgraph(rootId); // Start with first node
   });
 
-// For every object, find others referencing it and track them in __meta.incoming
+// Precompute incoming references as { id, field }
 function buildIncomingReferences(data) {
   for (const obj of Object.values(data)) {
     if (!obj.__meta) obj.__meta = {};
@@ -33,7 +33,7 @@ function buildIncomingReferences(data) {
           if (item && typeof item === 'object' && '__ref' in item) {
             const refId = item.__ref;
             if (refId in data) {
-              data[refId].__meta.incoming.push({ from: id, via: key });
+              data[refId].__meta.incoming.push({ id, field: key });
               refCount++;
             }
           }
@@ -41,7 +41,7 @@ function buildIncomingReferences(data) {
       } else if (val && typeof val === 'object' && '__ref' in val) {
         const refId = val.__ref;
         if (refId in data) {
-          data[refId].__meta.incoming.push({ from: id, via: key });
+          data[refId].__meta.incoming.push({ id, field: key });
           refCount++;
         }
       }
@@ -52,13 +52,10 @@ function buildIncomingReferences(data) {
 
 function makeLabel(id, obj) {
   const type = obj.__meta?.type || '?';
-  const mainLabel =
-    obj.name ||
-    obj.displayname ||
-    obj.spelling ||
-    '';
-  const suffix = `(${id}::${type})`;
-  return mainLabel ? `${mainLabel}\n${suffix}` : suffix;
+  const name = obj.name || obj.displayname || obj.spelling || '';
+  const line1 = name ? name : '';
+  const line2 = `(${id}::${type})`;
+  return line1 ? `${line1}\n${line2}` : line2;
 }
 
 function getTypeColor(type) {
@@ -82,8 +79,6 @@ function showSubgraph(centerId) {
   const addedEdges = new Set();
   const nodeItems = [];
   const edgeItems = [];
-  const outgoingGroups = {}; // group outgoing refs by field
-  const virtualFieldNodes = new Set();
 
   function addNode(id) {
     if (addedNodes.has(id)) return;
@@ -104,65 +99,53 @@ function showSubgraph(centerId) {
     edgeItems.push({ from, to, arrows: 'to', label });
   }
 
-  if (!(centerId in fullData)) {
-    console.warn('Missing centerId:', centerId);
-    return;
-  }
-
   addNode(centerId);
   const obj = fullData[centerId];
-
-  let totalOutgoing = 0;
 
   for (const [key, val] of Object.entries(obj)) {
     if (Array.isArray(val)) {
       const virtualId = `${centerId}::field::${key}`;
-      nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee' });
-      edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
-      virtualFieldNodes.add(virtualId);
+      const allRefs = val.filter(v => v && typeof v === 'object' && '__ref' in v).map(v => v.__ref);
+      const initial = allRefs.slice(0, THRESHOLD);
+      const remaining = allRefs.slice(THRESHOLD);
 
-      let count = 0;
-      for (const item of val) {
-        if (item && typeof item === 'object' && '__ref' in item) {
-          const refId = item.__ref;
-          if (!(refId in fullData)) continue;
-          if (++count > CLUSTER_THRESHOLD) continue;
-          addNode(refId);
-          addEdge(virtualId, refId);
-          totalOutgoing++;
-        }
+      nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
+      edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
+
+      for (const refId of initial) {
+        if (!(refId in fullData)) continue;
+        addNode(refId);
+        addEdge(virtualId, refId);
       }
     } else if (val && typeof val === 'object' && '__ref' in val) {
       const refId = val.__ref;
       if (refId in fullData) {
         addNode(refId);
         addEdge(centerId, refId, key);
-        totalOutgoing++;
       }
     }
   }
 
   const incoming = fullData[centerId].__meta.incoming || [];
-  if (incoming.length > CLUSTER_THRESHOLD) {
-    const proxyId = `${centerId}::incoming-proxy`;
-    nodeItems.push({ id: proxyId, label: '[incoming]', color: '#ccffcc' });
-    edgeItems.push({ from: proxyId, to: centerId, arrows: 'to' });
-    let count = 0;
-    for (const { from, via } of incoming) {
-      if (!(from in fullData)) continue;
-      if (++count > CLUSTER_THRESHOLD) continue;
-      addNode(from);
-      addEdge(from, proxyId, via);
+  if (incoming.length > THRESHOLD) {
+    const virtualId = `${centerId}::incoming`;
+    const initial = incoming.slice(0, THRESHOLD);
+    const remaining = incoming.slice(THRESHOLD);
+    nodeItems.push({ id: virtualId, label: `[incoming]`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
+    edgeItems.push({ from: virtualId, to: centerId, arrows: 'to', label: '' });
+
+    for (const { id: fromId, field } of initial) {
+      if (!(fromId in fullData)) continue;
+      addNode(fromId);
+      addEdge(fromId, virtualId, field);
     }
   } else {
-    for (const { from, via } of incoming) {
-      if (!(from in fullData)) continue;
-      addNode(from);
-      addEdge(from, centerId, via);
+    for (const { id: fromId, field } of incoming) {
+      if (!(fromId in fullData)) continue;
+      addNode(fromId);
+      addEdge(fromId, centerId, field);
     }
   }
-
-  console.log(`Total nodes: ${addedNodes.size}, edges: ${addedEdges.size}`);
 
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
@@ -177,13 +160,48 @@ function showSubgraph(centerId) {
     });
 
     network.on('doubleClick', function (params) {
-      if (params.nodes.length > 0) {
-        const clickedId = params.nodes[0];
-        showSubgraph(clickedId);
+      if (params.nodes.length === 0) return;
+      const nodeId = params.nodes[0];
+      const node = network.body.data.nodes.get(nodeId);
+
+      if (!node) return;
+
+      if (network.isCluster(nodeId)) {
+        network.openCluster(nodeId);
+      } else if (node.proxy) {
+        expandProxyNode(nodeId);
+      } else {
+        showSubgraph(nodeId);
       }
     });
   }
 
-  console.log('Network updated with new subgraph');
   network.moveTo({ scale: 1.0 });
+}
+
+function expandProxyNode(id) {
+  const node = network.body.data.nodes.get(id);
+  if (!node || !node.remaining || node.remaining.length === 0) return;
+
+  const newNodes = [];
+  const newEdges = [];
+
+  const nextBatch = node.remaining.splice(0, THRESHOLD);
+
+  for (const refId of nextBatch) {
+    if (!(refId in fullData)) continue;
+    const obj = fullData[refId];
+    newNodes.push({ id: refId, label: makeLabel(refId, obj), color: getTypeColor(obj.__meta?.type || '?') });
+    newEdges.push({ from: id, to: refId, arrows: 'to' });
+  }
+
+  network.body.data.nodes.update({ id, remaining: node.remaining });
+  network.body.data.nodes.add(newNodes);
+  network.body.data.edges.add(newEdges);
+
+  if (node.remaining.length > 0) {
+    const n = network.body.data.nodes.get(id);
+    n.label = n.label.replace(/(…)?$/, '…');
+    network.body.data.nodes.update(n);
+  }
 }
