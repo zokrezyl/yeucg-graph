@@ -18,6 +18,7 @@
     const dataUrl = './clang.json';
     let fullData = {};
     let reverseRefs = {};
+    let forwardRefs = {};
     let nodes = new vis.DataSet();
     let edges = new vis.DataSet();
 
@@ -32,17 +33,20 @@
       .then(res => res.json())
       .then(json => {
         fullData = json;
-        buildReverseRefs(json);
+        buildReferenceMaps(json);
         if (Object.keys(json).length > 0) {
           const rootId = Object.keys(json)[0];
           showSubgraph(rootId);
         }
       });
 
-    function buildReverseRefs(data) {
+    function buildReferenceMaps(data) {
       reverseRefs = {};
+      forwardRefs = {};
       for (const [id, obj] of Object.entries(data)) {
+        forwardRefs[id] = new Set();
         walkObject(id, obj, (refId) => {
+          forwardRefs[id].add(refId);
           if (!(refId in reverseRefs)) reverseRefs[refId] = new Set();
           reverseRefs[refId].add(id);
         });
@@ -77,24 +81,28 @@
       nodes.add({ id: centerId, label: makeLabel(centerId, center), color: getTypeColor(centerType) });
 
       // Outgoing references
-      walkObject(centerId, center, (refId, key) => {
-        if (refId in fullData) {
-          const ref = fullData[refId];
-          const refType = ref.__meta?.type || '?';
-          nodes.add({ id: refId, label: makeLabel(refId, ref), color: getTypeColor(refType) });
-          edges.add({ from: centerId, to: refId, label: key, arrows: 'to' });
-        }
-      });
+      if (forwardRefs[centerId]) {
+        forwardRefs[centerId].forEach(refId => {
+          if (refId in fullData) {
+            const ref = fullData[refId];
+            const refType = ref.__meta?.type || '?';
+            nodes.add({ id: refId, label: makeLabel(refId, ref), color: getTypeColor(refType) });
+            edges.add({ from: centerId, to: refId, label: 'refers', arrows: 'to' });
+          }
+        });
+      }
 
       // Incoming references
-      (reverseRefs[centerId] || []).forEach(fromId => {
-        const from = fullData[fromId];
-        if (from) {
-          const fromType = from.__meta?.type || '?';
-          nodes.add({ id: fromId, label: makeLabel(fromId, from), color: getTypeColor(fromType) });
-          edges.add({ from: fromId, to: centerId, label: 'refers', arrows: 'to' });
-        }
-      });
+      if (reverseRefs[centerId]) {
+        reverseRefs[centerId].forEach(fromId => {
+          if (fromId in fullData) {
+            const from = fullData[fromId];
+            const fromType = from.__meta?.type || '?';
+            nodes.add({ id: fromId, label: makeLabel(fromId, from), color: getTypeColor(fromType) });
+            edges.add({ from: fromId, to: centerId, label: 'refers', arrows: 'to' });
+          }
+        });
+      }
 
       network.fit({ nodes: [centerId], animation: true });
     }
@@ -110,8 +118,12 @@
           }
         } else if (Array.isArray(val)) {
           val.forEach(entry => {
-            if (entry && typeof entry === 'object' && '__ref' in entry) {
-              onRef(entry.__ref, key);
+            if (entry && typeof entry === 'object') {
+              if ('__ref' in entry) {
+                onRef(entry.__ref, key);
+              } else {
+                walkObject(parentId, entry, onRef);
+              }
             }
           });
         }
