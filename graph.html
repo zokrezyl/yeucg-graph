@@ -49,18 +49,39 @@
       }
     }
 
+    function makeLabel(id, obj) {
+      const type = obj.__meta?.type || '?';
+      return `${id}\n(${type})`;
+    }
+
+    function getTypeColor(type) {
+      const palette = {
+        'TranslationUnit': '#FFD966',
+        'Cursor': '#A4C2F4',
+        'Type': '#D9EAD3',
+        'File': '#F4CCCC',
+        'SourceLocation': '#D5A6BD',
+        'SourceRange': '#B6D7A8',
+        '?': '#CCCCCC'
+      };
+      return palette[type] || '#E0E0E0';
+    }
+
     function showSubgraph(centerId) {
       nodes.clear();
       edges.clear();
       if (!(centerId in fullData)) return;
 
       const center = fullData[centerId];
-      nodes.add({ id: centerId, label: `${centerId}\n(${center.__meta?.type || '?'})`, color: '#fdf3c2' });
+      const centerType = center.__meta?.type || '?';
+      nodes.add({ id: centerId, label: makeLabel(centerId, center), color: getTypeColor(centerType) });
 
       // Outgoing references
       walkObject(centerId, center, (refId, key) => {
         if (refId in fullData) {
-          nodes.add({ id: refId, label: refId });
+          const ref = fullData[refId];
+          const refType = ref.__meta?.type || '?';
+          nodes.add({ id: refId, label: makeLabel(refId, ref), color: getTypeColor(refType) });
           edges.add({ from: centerId, to: refId, label: key, arrows: 'to' });
         }
       });
@@ -69,7 +90,8 @@
       (reverseRefs[centerId] || []).forEach(fromId => {
         const from = fullData[fromId];
         if (from) {
-          nodes.add({ id: fromId, label: fromId });
+          const fromType = from.__meta?.type || '?';
+          nodes.add({ id: fromId, label: makeLabel(fromId, from), color: getTypeColor(fromType) });
           edges.add({ from: fromId, to: centerId, label: 'refers', arrows: 'to' });
         }
       });
