@@ -116,30 +116,22 @@ function showSubgraph(centerId) {
     }
   }
 
-  if (directRefs.length > CLUSTER_THRESHOLD) {
-    // Add all referenced nodes first
-    for (const refId of directRefs) {
-      if (!(refId in fullData)) continue;
-      const refObj = fullData[refId];
-      const kind = refObj.kind || 'Other';
-      const clusterId = `${centerId}::cluster::${kind}`;
-      if (!clusterGroups[kind]) {
-        clusterGroups[kind] = [];
-      }
-      clusterGroups[kind].push(refId);
-    }
+  const useClustering = directRefs.length > CLUSTER_THRESHOLD;
 
-    for (const [kind, members] of Object.entries(clusterGroups)) {
-      for (const id of members) {
-        addNode(id);
-        addEdge(centerId, id);
-      }
+  for (const refId of directRefs) {
+    if (!(refId in fullData)) continue;
+    const refObj = fullData[refId];
+    const kind = refObj.kind || 'Other';
+    if (!clusterGroups[kind]) {
+      clusterGroups[kind] = [];
     }
-  } else {
-    for (const refId of directRefs) {
-      if (!(refId in fullData)) continue;
-      addNode(refId);
-      addEdge(centerId, refId);
+    clusterGroups[kind].push(refId);
+  }
+
+  for (const [kind, members] of Object.entries(clusterGroups)) {
+    for (const id of members) {
+      addNode(id);
+      addEdge(centerId, id);
     }
   }
 
@@ -165,21 +157,20 @@ function showSubgraph(centerId) {
     network.on('doubleClick', function (params) {
       if (params.nodes.length > 0) {
         const clickedId = params.nodes[0];
-        showSubgraph(clickedId);
+        network.openCluster(clickedId);
       }
     });
   }
 
-  // Now use native vis clustering on existing nodes
-  if (directRefs.length > CLUSTER_THRESHOLD) {
+  if (useClustering) {
     for (const kind of Object.keys(clusterGroups)) {
+      const ids = new Set(clusterGroups[kind]);
       const clusterOptions = {
         joinCondition: function (nodeOptions) {
-          const ids = new Set(clusterGroups[kind]);
           return ids.has(nodeOptions.id);
         },
         clusterNodeProperties: {
-          id: `${centerId}::cluster::${kind}`,
+          id: `cluster::${kind}`,
           label: `Cluster: ${kind}`,
           allowSingleNodeCluster: false,
           color: '#ccccff'
