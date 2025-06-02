@@ -75,7 +75,7 @@ function makeLabel(id, obj, isExpanded = false) {
       }
     });
 
-  return [line1, line2, ...fields].filter(Boolean).join('\n');
+  return [line1, line2, ...fields, '\n❌ Right-click to delete'].filter(Boolean).join('\n');
 }
 
 function getTypeColor(type) {
@@ -204,6 +204,18 @@ function showSubgraph(centerId, clear = true) {
       node.isExpanded = !node.isExpanded;
       node.label = makeLabel(nodeId, obj, node.isExpanded);
       network.body.data.nodes.update(node);
+    });
+
+    network.on('oncontext', function (params) {
+      const pointer = network.getNodeAt(params.pointer.DOM);
+      if (pointer) {
+        const node = network.body.data.nodes.get(pointer);
+        if (node && node.isExpanded) {
+          network.body.data.nodes.remove(pointer);
+          const edges = network.body.data.edges.get({ filter: e => e.from === pointer || e.to === pointer });
+          network.body.data.edges.remove(edges.map(e => e.id));
+        }
+      }
     });
   } else {
     network.setData({ nodes: visNodes, edges: visEdges });
