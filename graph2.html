@@ -1,0 +1,78 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>vis-network 10k Clustered Example</title>
+  <script src="https://unpkg.com/vis-network@9.1.2/dist/vis-network.min.js"></script>
+  <style>
+    #network { width: 100vw; height: 100vh; border: 1px solid lightgray; }
+  </style>
+</head>
+<body>
+<div id="network"></div>
+<script>
+  const container = document.getElementById("network");
+
+  // Step 1: Generate flat dictionary of 10k nodes with random kinds and random links
+  const KINDS = [...Array(10)].map((_, i) => `kind_${i}`);
+  const flatData = {};
+  const totalNodes = 10000;
+  for (let i = 0; i < totalNodes; i++) {
+    flatData["n" + i] = {
+      label: "Node " + i,
+      kind: KINDS[Math.floor(Math.random() * KINDS.length)],
+      refs: [...new Set(Array.from({length: Math.floor(Math.random() * 3)}, () => "n" + Math.floor(Math.random() * totalNodes)))]
+    };
+  }
+
+  // Step 2: Convert flatData to nodes and edges arrays
+  const nodes = [];
+  const edges = [];
+  for (const [id, value] of Object.entries(flatData)) {
+    nodes.push({ id, label: value.label, group: value.kind });
+
+    if (value.refs) {
+      for (const target of value.refs) {
+        if (target in flatData) {
+          edges.push({ from: id, to: target });
+        }
+      }
+    }
+  }
+
+  const data = { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) };
+  const options = {
+    layout: {
+      hierarchical: false,
+      improvedLayout: false
+    },
+    physics: false,
+    nodes: { shape: "dot", size: 5 },
+    groups: KINDS.reduce((acc, kind, idx) => {
+      acc[kind] = { color: { background: `hsl(${idx * 36}, 70%, 70%)` } };
+      return acc;
+    }, {})
+  };
+
+  const network = new vis.Network(container, data, options);
+
+  // Step 3: After stabilization, cluster nodes by kind
+  network.once("stabilizationIterationsDone", () => {
+    KINDS.forEach(kind => {
+      network.cluster({
+        joinCondition: (nodeOptions) => nodeOptions.group === kind,
+        clusterNodeProperties: {
+          id: 'cluster_' + kind,
+          label: kind,
+          group: kind,
+          shape: 'box',
+          color: { background: 'black', border: 'gray' },
+          font: { color: 'white' }
+        }
+      });
+    });
+    network.stabilize();
+  });
+</script>
+</body>
+</html>

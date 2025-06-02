@@ -125,10 +125,20 @@ function showSubgraph(centerId) {
     clusterGroups[kind].push(refId);
   }
 
-  for (const [kind, members] of Object.entries(clusterGroups)) {
-    for (const id of members) {
-      addNode(id);
-      addEdge(centerId, id);
+  const totalOut = outgoingRefs.length;
+
+  if (totalOut > CLUSTER_THRESHOLD) {
+    for (const [kind, members] of Object.entries(clusterGroups)) {
+      for (const id of members) {
+        addNode(id);
+        addEdge(centerId, id);
+      }
+    }
+  } else {
+    for (const refId of outgoingRefs) {
+      if (!(refId in fullData)) continue;
+      addNode(refId);
+      addEdge(centerId, refId);
     }
   }
 
@@ -154,26 +164,32 @@ function showSubgraph(centerId) {
     network.on('doubleClick', function (params) {
       if (params.nodes.length > 0) {
         const clickedId = params.nodes[0];
-        network.openCluster(clickedId);
+        if (network.isCluster(clickedId)) {
+          network.openCluster(clickedId);
+        } else {
+          showSubgraph(clickedId);
+        }
       }
     });
   }
 
-  for (const [kind, members] of Object.entries(clusterGroups)) {
-    if (members.length > CLUSTER_THRESHOLD) {
-      const ids = new Set(members);
-      const clusterOptions = {
-        joinCondition: function (nodeOptions) {
-          return ids.has(nodeOptions.id);
-        },
-        clusterNodeProperties: {
-          id: `cluster::${kind}`,
-          label: `Cluster: ${kind}`,
-          allowSingleNodeCluster: false,
-          color: '#ccccff'
-        }
-      };
-      network.cluster(clusterOptions);
+  if (totalOut > CLUSTER_THRESHOLD) {
+    for (const [kind, members] of Object.entries(clusterGroups)) {
+      if (members.length > 1) {
+        const ids = new Set(members);
+        const clusterOptions = {
+          joinCondition: function (nodeOptions) {
+            return ids.has(nodeOptions.id);
+          },
+          clusterNodeProperties: {
+            id: `cluster::${centerId}::${kind}`,
+            label: `Cluster: ${kind}`,
+            allowSingleNodeCluster: false,
+            color: '#ccccff'
+          }
+        };
+        network.cluster(clusterOptions);
+      }
     }
   }
 
