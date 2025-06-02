@@ -4,7 +4,7 @@ let fullData = {};
 
 const container = document.getElementById('network');
 const network = new vis.Network(container, { nodes: [], edges: [] }, {
-  layout: { improvedLayout: false },
+  layout: { improvedLayout: true },
   interaction: { hover: true },
   physics: { stabilization: true },
 });
@@ -81,11 +81,16 @@ function showSubgraph(centerId) {
   const clusterMap = new Map();
   let forwardRefs = [];
 
+
   function addNode(id) {
     if (addedNodes.has(id)) return;
-    addedNodes.add(id);
     const obj = fullData[id];
-    const type = obj?.__meta?.type || '?';
+    if (!obj) {
+      console.warn(`Missing object for ID: ${id}`);
+      return;
+    }
+    addedNodes.add(id);
+    const type = obj.__meta?.type || '?';
     nodeItems.push({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
   }
 
@@ -104,7 +109,6 @@ function showSubgraph(centerId) {
   const obj = fullData[centerId];
   addNode(centerId);
 
-  // Collect forward refs
   for (const val of Object.values(obj)) {
     if (Array.isArray(val)) {
       for (const item of val) {
@@ -125,41 +129,39 @@ function showSubgraph(centerId) {
       if (!clusterMap.has(kind)) clusterMap.set(kind, new Set());
       clusterMap.get(kind).add(refId);
     }
+
     for (const [kind, members] of clusterMap.entries()) {
       const clusterId = `${centerId}::cluster::${kind}`;
-      if (!addedNodes.has(clusterId)) {
-        nodeItems.push({ id: clusterId, label: `(${kind})`, color: '#ccc' });
-        addedNodes.add(clusterId);
-      }
+      addNode(clusterId);
       addEdge(centerId, clusterId, 'kind');
+
+      for (const refId of members) {
+        if (!(refId in fullData)) continue;
+        addNode(refId);
+        addEdge(clusterId, refId);
+      }
     }
-
-  console.log(`Clustering done`);
   } else {
-
     for (const refId of forwardRefs) {
       if (!(refId in fullData)) continue;
       addNode(refId);
       addEdge(centerId, refId);
     }
-      // allow incoming edges only when not clustering
-    const incoming = fullData[centerId].__meta.incoming || new Set();
-    for (const fromId of incoming) {
-      if (!(fromId in fullData)) continue;
-      addNode(fromId);
-      addEdge(fromId, centerId);
-    }
   }
 
+  const incoming = fullData[centerId].__meta.incoming || new Set();
+  for (const fromId of incoming) {
+    if (!(fromId in fullData)) continue;
+    addNode(fromId);
+    addEdge(fromId, centerId);
+  }
 
   network.setData({
     nodes: new vis.DataSet(nodeItems),
     edges: new vis.DataSet(edgeItems),
   });
 
-  //network.moveTo({ scale: 0.5 });
-
-  network.fit({ nodes: [centerId], animation: false });
+  network.moveTo({ scale: 0.5 });
 }
 
 network.on('doubleClick', function (params) {
