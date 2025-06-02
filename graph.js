@@ -1,21 +1,24 @@
 
+// Entry point: load JSON file and initialize graph
 const dataUrl = './clang.json';
-let fullData = {};
+let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const CLUSTER_THRESHOLD = 1000;
+const CLUSTER_THRESHOLD = 1000; // Only cluster if too many outgoing refs
 
+// Fetch and process the JSON file
 fetch(dataUrl)
   .then(res => res.json())
   .then(json => {
     fullData = json;
     console.log('Loaded nodes:', Object.keys(json).length);
-    buildIncomingReferences(json);
+    buildIncomingReferences(json); // Precompute incoming references
     const rootId = Object.keys(json)[0];
-    showSubgraph(rootId);
+    showSubgraph(rootId); // Start with first node
   });
 
+// For every object, find others referencing it and track them in __meta.incoming
 function buildIncomingReferences(data) {
   for (const obj of Object.values(data)) {
     if (!obj.__meta) obj.__meta = {};
@@ -30,7 +33,7 @@ function buildIncomingReferences(data) {
           if (item && typeof item === 'object' && '__ref' in item) {
             const refId = item.__ref;
             if (refId in data) {
-              data[refId].__meta.incoming.add(id);
+              data[refId].__meta.incoming.add(id); // Track who references this object
               refCount++;
             }
           }
@@ -47,11 +50,13 @@ function buildIncomingReferences(data) {
   console.log('Total references indexed:', refCount);
 }
 
+// Create label text for node rendering
 function makeLabel(id, obj) {
   const type = obj.__meta?.type || '?';
   return `${id}\n(${type})`;
 }
 
+// Assign a color based on node type
 function getTypeColor(type) {
   const palette = {
     'TranslationUnit': '#FFD966',
@@ -65,17 +70,19 @@ function getTypeColor(type) {
   return palette[type] || '#E0E0E0';
 }
 
+// Populate and render a subgraph centered around a given node
 function showSubgraph(centerId) {
   console.clear();
   console.log('Opening node:', centerId);
 
   const addedNodes = new Set();
   const addedEdges = new Set();
-  const nodeItems = [];
-  const edgeItems = [];
-  const clusterGroups = {};
-  const clusteredNodeIds = new Set();
+  const nodeItems = []; // Will batch node creation
+  const edgeItems = []; // Will batch edge creation
+  const clusterGroups = {}; // Will store grouping by 'kind'
+  const clusteredNodeIds = new Set(); // Tracks nodes to hide in clusters
 
+  // Adds a node to the queue if not already added
   function addNode(id) {
     if (addedNodes.has(id)) return;
     const obj = fullData[id];
@@ -88,6 +95,7 @@ function showSubgraph(centerId) {
     nodeItems.push({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
   }
 
+  // Adds a directed edge if not already added
   function addEdge(from, to) {
     const key = `${from}->${to}`;
     if (addedEdges.has(key)) return;
@@ -100,10 +108,12 @@ function showSubgraph(centerId) {
     return;
   }
 
-  addNode(centerId);
+  addNode(centerId); // Always include the center
   const obj = fullData[centerId];
 
-  const outgoingRefs = [];
+  const outgoingRefs = []; // Store all outgoing __ref values
+
+  // Walk the fields to collect references
   for (const val of Object.values(obj)) {
     if (Array.isArray(val)) {
       for (const item of val) {
@@ -116,6 +126,7 @@ function showSubgraph(centerId) {
     }
   }
 
+  // Group referenced nodes by their 'kind'
   for (const refId of outgoingRefs) {
     if (!(refId in fullData)) continue;
     const refObj = fullData[refId];
@@ -128,10 +139,11 @@ function showSubgraph(centerId) {
 
   const totalOut = outgoingRefs.length;
 
+  // For large numbers of refs, apply clustering
   for (const [kind, members] of Object.entries(clusterGroups)) {
     if (totalOut > CLUSTER_THRESHOLD && members.length > 1) {
       for (const id of members) {
-        clusteredNodeIds.add(id);
+        clusteredNodeIds.add(id); // Mark for later clustering
       }
     } else {
       for (const id of members) {
@@ -141,18 +153,18 @@ function showSubgraph(centerId) {
     }
   }
 
-  /*
+  // Add incoming nodes and edges normally
   const incoming = fullData[centerId].__meta.incoming || new Set();
   for (const fromId of incoming) {
     if (!(fromId in fullData)) continue;
     addNode(fromId);
     addEdge(fromId, centerId);
   }
-  */ 
 
-  const visNodes = new vis.DataSet(nodeItems);
-  const visEdges = new vis.DataSet(edgeItems);
+  const visNodes = new vis.DataSet(nodeItems); // Batch nodes
+  const visEdges = new vis.DataSet(edgeItems); // Batch edges
 
+  // Initial creation or data replacement
   if (network) {
     network.setData({ nodes: visNodes, edges: visEdges });
   } else {
@@ -162,6 +174,7 @@ function showSubgraph(centerId) {
       physics: { stabilization: true },
     });
 
+    // Handle double-click: expand clusters or drill down
     network.on('doubleClick', function (params) {
       if (params.nodes.length > 0) {
         const clickedId = params.nodes[0];
@@ -174,6 +187,7 @@ function showSubgraph(centerId) {
     });
   }
 
+  // Add clusters for large outgoing groups
   if (totalOut > CLUSTER_THRESHOLD) {
     for (const [kind, members] of Object.entries(clusterGroups)) {
       if (members.length > 1) {
@@ -189,10 +203,11 @@ function showSubgraph(centerId) {
             color: '#ccccff'
           }
         };
-        network.cluster(clusterOptions);
+        network.cluster(clusterOptions); // Collapse group
       }
     }
   }
 
+  // Center viewport
   network.moveTo({ scale: 1.0 });
 }
