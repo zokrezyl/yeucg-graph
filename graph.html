@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -14,16 +15,14 @@
   <div id="network"></div>
 
   <script>
-    const dataUrl = 'clang.json'; // Change if needed
+    const dataUrl = './clang.json';
     let fullData = {};
+    let reverseRefs = {};
     let nodes = new vis.DataSet();
     let edges = new vis.DataSet();
-    let visited = new Set();
 
-    const network = new vis.Network(document.getElementById('network'), {
-      nodes: nodes,
-      edges: edges
-    }, {
+    const container = document.getElementById('network');
+    const network = new vis.Network(container, { nodes, edges }, {
       layout: { improvedLayout: true },
       interaction: { hover: true },
       physics: { stabilization: true },
@@ -33,22 +32,49 @@
       .then(res => res.json())
       .then(json => {
         fullData = json;
+        buildReverseRefs(json);
         if (Object.keys(json).length > 0) {
           const rootId = Object.keys(json)[0];
-          expandNode(rootId);
+          showSubgraph(rootId);
         }
       });
 
-    function expandNode(id) {
-      if (visited.has(id) || !(id in fullData)) return;
-      visited.add(id);
+    function buildReverseRefs(data) {
+      reverseRefs = {};
+      for (const [id, obj] of Object.entries(data)) {
+        walkObject(id, obj, (refId) => {
+          if (!(refId in reverseRefs)) reverseRefs[refId] = new Set();
+          reverseRefs[refId].add(id);
+        });
+      }
+    }
 
-      const item = fullData[id];
-      nodes.add({ id, label: `${id}\n(${item.__meta?.type || '?'})` });
+    function showSubgraph(centerId) {
+      nodes.clear();
+      edges.clear();
+      if (!(centerId in fullData)) return;
 
-      walkObject(id, item, (refId, field) => {
-        edges.add({ from: id, to: refId, label: field, arrows: 'to' });
+      const center = fullData[centerId];
+      nodes.add({ id: centerId, label: `${centerId}\n(${center.__meta?.type || '?'})`, color: '#fdf3c2' });
+
+      // Outgoing references
+      walkObject(centerId, center, (refId, key) => {
+        if (refId in fullData) {
+          nodes.add({ id: refId, label: refId });
+          edges.add({ from: centerId, to: refId, label: key, arrows: 'to' });
+        }
       });
+
+      // Incoming references
+      (reverseRefs[centerId] || []).forEach(fromId => {
+        const from = fullData[fromId];
+        if (from) {
+          nodes.add({ id: fromId, label: fromId });
+          edges.add({ from: fromId, to: centerId, label: 'refers', arrows: 'to' });
+        }
+      });
+
+      network.fit({ nodes: [centerId], animation: true });
     }
 
     function walkObject(parentId, obj, onRef) {
@@ -56,18 +82,14 @@
       for (const [key, val] of Object.entries(obj)) {
         if (val && typeof val === 'object') {
           if ('__ref' in val) {
-            const refId = val.__ref;
-            nodes.update({ id: refId, label: refId, color: { background: '#eee' } });
-            onRef(refId, key);
+            onRef(val.__ref, key);
           } else {
             walkObject(parentId, val, onRef);
           }
         } else if (Array.isArray(val)) {
           val.forEach(entry => {
             if (entry && typeof entry === 'object' && '__ref' in entry) {
-              const refId = entry.__ref;
-              nodes.update({ id: refId, label: refId, color: { background: '#eee' } });
-              onRef(refId, key);
+              onRef(entry.__ref, key);
             }
           });
         }
@@ -76,7 +98,8 @@
 
     network.on('doubleClick', function (params) {
       if (params.nodes.length > 0) {
-        expandNode(params.nodes[0]);
+        const clickedId = params.nodes[0];
+        showSubgraph(clickedId);
       }
     });
   </script>
