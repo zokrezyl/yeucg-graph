@@ -127,18 +127,10 @@ function showSubgraph(centerId) {
 
   const totalOut = outgoingRefs.length;
 
-  if (totalOut > CLUSTER_THRESHOLD) {
-    for (const [kind, members] of Object.entries(clusterGroups)) {
-      for (const id of members) {
-        addNode(id);
-        addEdge(centerId, id);
-      }
-    }
-  } else {
-    for (const refId of outgoingRefs) {
-      if (!(refId in fullData)) continue;
-      addNode(refId);
-      addEdge(centerId, refId);
+  for (const [kind, members] of Object.entries(clusterGroups)) {
+    for (const id of members) {
+      addNode(id);
+      addEdge(centerId, id);
     }
   }
 
@@ -173,6 +165,7 @@ function showSubgraph(centerId) {
     });
   }
 
+  // Apply clustering after nodes are added
   if (totalOut > CLUSTER_THRESHOLD) {
     for (const [kind, members] of Object.entries(clusterGroups)) {
       if (members.length > 1) {
@@ -182,7 +175,7 @@ function showSubgraph(centerId) {
             return ids.has(nodeOptions.id);
           },
           clusterNodeProperties: {
-            id: `cluster::${centerId}::${kind}`,
+            id: `cluster-${centerId}-${kind}`,
             label: `Cluster: ${kind}`,
             allowSingleNodeCluster: false,
             color: '#ccccff'
