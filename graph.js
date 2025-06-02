@@ -52,8 +52,13 @@ function buildIncomingReferences(data) {
 
 function makeLabel(id, obj) {
   const type = obj.__meta?.type || '?';
-  const name = obj.name || obj.displayname || id;
-  return `${name}\n(${type})`;
+  const mainLabel =
+    obj.name ||
+    obj.displayname ||
+    obj.spelling ||
+    '';
+  const suffix = `(${id}::${type})`;
+  return mainLabel ? `${mainLabel}\n${suffix}` : suffix;
 }
 
 function getTypeColor(type) {
