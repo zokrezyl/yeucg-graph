@@ -5,7 +5,7 @@ let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const CLUSTER_THRESHOLD = 1000; // Only cluster if too many outgoing refs
+const CLUSTER_THRESHOLD = 1000; // Only cluster if too many refs
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -79,8 +79,8 @@ function showSubgraph(centerId) {
   const addedEdges = new Set();
   const nodeItems = []; // Will batch node creation
   const edgeItems = []; // Will batch edge creation
-  const clusterGroups = {}; // Will store grouping by 'kind'
-  const clusteredNodeIds = new Set(); // Tracks nodes to hide in clusters
+  const clusterGroupsOut = {}; // Grouping by 'kind' for outgoing
+  const clusterGroupsIn = {}; // Grouping by 'kind' for incoming
 
   // Adds a node to the queue if not already added
   function addNode(id) {
@@ -126,45 +126,91 @@ function showSubgraph(centerId) {
     }
   }
 
+  // Group referenced nodes by their 'kind'
+  for (const refId of outgoingRefs) {
+    if (!(refId in fullData)) continue;
+    const refObj = fullData[refId];
+    const kind = refObj.kind || 'Other';
+    if (!clusterGroupsOut[kind]) {
+      clusterGroupsOut[kind] = [];
+    }
+    clusterGroupsOut[kind].push(refId);
+  }
+
   const totalOut = outgoingRefs.length;
 
-  // Only group for clustering if the total outgoing refs exceed threshold
+  // For large numbers of outgoing refs, apply clustering
   if (totalOut > CLUSTER_THRESHOLD) {
-    for (const refId of outgoingRefs) {
-      if (!(refId in fullData)) continue;
-      const refObj = fullData[refId];
-      const kind = refObj.kind || 'Other';
-      if (!clusterGroups[kind]) {
-        clusterGroups[kind] = [];
+    for (const [kind, members] of Object.entries(clusterGroupsOut)) {
+      if (members.length > 1) {
+        const ids = new Set(members);
+        const clusterOptions = {
+          joinCondition: function (nodeOptions) {
+            return ids.has(nodeOptions.id);
+          },
+          clusterNodeProperties: {
+            id: `cluster-out-${centerId}-${kind}`,
+            label: `Out: ${kind}`,
+            allowSingleNodeCluster: false,
+            color: '#ccccff'
+          }
+        };
+        members.forEach(id => addNode(id));
+        members.forEach(id => addEdge(centerId, id));
+        // cluster creation will occur after setData()
+        clusterGroupsOut[kind].clusterOptions = clusterOptions;
       }
-      clusterGroups[kind].push(refId);
     }
-
-    // Mark all for clustering
-    for (const [kind, members] of Object.entries(clusterGroups)) {
+  } else {
+    for (const [kind, members] of Object.entries(clusterGroupsOut)) {
       for (const id of members) {
-        clusteredNodeIds.add(id);
         addNode(id);
         addEdge(centerId, id);
       }
     }
-  } else {
-    // Just add normally
-    for (const refId of outgoingRefs) {
-      if (!(refId in fullData)) continue;
-      addNode(refId);
-      addEdge(centerId, refId);
-    }
   }
 
-  console.log(`Total outgoing references from ${centerId}:`, totalOut);
-
-  // Add incoming nodes and edges normally
+  // Add incoming nodes and edges
   const incoming = fullData[centerId].__meta.incoming || new Set();
+  const totalIn = incoming.size;
+
   for (const fromId of incoming) {
     if (!(fromId in fullData)) continue;
-    addNode(fromId);
-    addEdge(fromId, centerId);
+    const fromObj = fullData[fromId];
+    const kind = fromObj.kind || 'Other';
+    if (!clusterGroupsIn[kind]) {
+      clusterGroupsIn[kind] = [];
+    }
+    clusterGroupsIn[kind].push(fromId);
+  }
+
+  if (totalIn > CLUSTER_THRESHOLD) {
+    for (const [kind, members] of Object.entries(clusterGroupsIn)) {
+      if (members.length > 1) {
+        const ids = new Set(members);
+        const clusterOptions = {
+          joinCondition: function (nodeOptions) {
+            return ids.has(nodeOptions.id);
+          },
+          clusterNodeProperties: {
+            id: `cluster-in-${centerId}-${kind}`,
+            label: `In: ${kind}`,
+            allowSingleNodeCluster: false,
+            color: '#ffcccc'
+          }
+        };
+        members.forEach(id => addNode(id));
+        members.forEach(id => addEdge(id, centerId));
+        clusterGroupsIn[kind].clusterOptions = clusterOptions;
+      }
+    }
+  } else {
+    for (const [kind, members] of Object.entries(clusterGroupsIn)) {
+      for (const id of members) {
+        addNode(id);
+        addEdge(id, centerId);
+      }
+    }
   }
 
   const visNodes = new vis.DataSet(nodeItems); // Batch nodes
@@ -193,26 +239,21 @@ function showSubgraph(centerId) {
     });
   }
 
-  // Create native clusters *only if* total outgoing exceeded threshold
+  // After rendering, create clusters from stored options
   if (totalOut > CLUSTER_THRESHOLD) {
-    for (const [kind, members] of Object.entries(clusterGroups)) {
-      const ids = new Set(members);
-      const clusterOptions = {
-        joinCondition: function (nodeOptions) {
-          return ids.has(nodeOptions.id);
-        },
-        clusterNodeProperties: {
-          id: `cluster-${centerId}-${kind}`,
-          label: `Cluster: ${kind}`,
-          allowSingleNodeCluster: false,
-          color: '#ccccff'
-        }
-      };
-      network.cluster(clusterOptions); // Collapse group
+    for (const group of Object.values(clusterGroupsOut)) {
+      if (group.clusterOptions) {
+        network.cluster(group.clusterOptions);
+      }
     }
-    console.log(`Created clusters for ${Object.keys(clusterGroups).length} kinds.`);
   }
-  console.log(`Total nodes added: ${addedNodes.size}, edges added: ${addedEdges.size}`);
+  if (totalIn > CLUSTER_THRESHOLD) {
+    for (const group of Object.values(clusterGroupsIn)) {
+      if (group.clusterOptions) {
+        network.cluster(group.clusterOptions);
+      }
+    }
+  }
 
   // Center viewport
   network.moveTo({ scale: 1.0 });
