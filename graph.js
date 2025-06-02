@@ -109,8 +109,7 @@ function showSubgraph(centerId) {
       const initial = allRefs.slice(0, THRESHOLD);
       const remaining = allRefs.slice(THRESHOLD);
 
-      const label = remaining.length > 0 ? `[${key}]\n(click to expand ${remaining.length} more)` : `[${key}]`;
-      nodeItems.push({ id: virtualId, label, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
+      nodeItems.push({ id: virtualId, label: `[${key}] (${remaining.length} more)`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
       edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
 
       for (const refId of initial) {
@@ -132,8 +131,7 @@ function showSubgraph(centerId) {
     const virtualId = `${centerId}::incoming`;
     const initial = incoming.slice(0, THRESHOLD);
     const remaining = incoming.slice(THRESHOLD);
-    const label = `[incoming]\n(click to expand ${remaining.length} more)`;
-    nodeItems.push({ id: virtualId, label, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
+    nodeItems.push({ id: virtualId, label: `[incoming] (${remaining.length} more)`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
     edgeItems.push({ from: virtualId, to: centerId, arrows: 'to', label: '' });
 
     for (const { id: fromId, field } of initial) {
@@ -176,6 +174,40 @@ function showSubgraph(centerId) {
         showSubgraph(nodeId);
       }
     });
+
+    network.on('click', function (params) {
+      if (params.nodes.length === 0) return;
+      const nodeId = params.nodes[0];
+      const node = network.body.data.nodes.get(nodeId);
+
+      if (!node || node.proxy) return;
+      const obj = fullData[nodeId];
+      if (!obj) return;
+
+      if (node.detailed) {
+        node.label = makeLabel(nodeId, obj);
+        node.detailed = false;
+      } else {
+        const lines = [];
+        for (const [key, val] of Object.entries(obj)) {
+          if (typeof val === 'object' && val !== null && '__ref' in val) {
+            lines.push(`${key}: ->`);
+          } else if (Array.isArray(val)) {
+            const isRefArray = val.some(v => v && typeof v === 'object' && '__ref' in v);
+            lines.push(`${key}: ${isRefArray ? '[]->' : '[...]'}`);
+          } else if (typeof val === 'object') {
+            lines.push(`${key}: {...}`);
+          } else {
+            lines.push(`${key}: ${val}`);
+          }
+        }
+        lines.push(`(${nodeId}::${obj.__meta?.type || '?'})`);
+        node.label = lines.join('\n');
+        node.detailed = true;
+      }
+
+      network.body.data.nodes.update(node);
+    });
   }
 
   network.moveTo({ scale: 1.0 });
@@ -190,17 +222,25 @@ function expandProxyNode(id) {
 
   const nextBatch = node.remaining.splice(0, THRESHOLD);
 
-  for (const refId of nextBatch) {
+  for (const ref of nextBatch) {
+    let refId = typeof ref === 'string' ? ref : ref.id;
     if (!(refId in fullData)) continue;
     const obj = fullData[refId];
     newNodes.push({ id: refId, label: makeLabel(refId, obj), color: getTypeColor(obj.__meta?.type || '?') });
-    newEdges.push({ from: id, to: refId, arrows: 'to' });
+    const from = node.targetId ? refId : id;
+    const to = node.targetId ? id : refId;
+    const label = ref.field || '';
+    newEdges.push({ from, to, arrows: 'to', label });
   }
 
-  const newLabel = node.label.replace(/\n\(click to expand.*\)?$/, '');
-  const updatedLabel = node.remaining.length > 0 ? `${newLabel}\n(click to expand ${node.remaining.length} more)` : newLabel;
-
-  network.body.data.nodes.update({ id, remaining: node.remaining, label: updatedLabel });
+  network.body.data.nodes.update({ id, remaining: node.remaining });
   network.body.data.nodes.add(newNodes);
   network.body.data.edges.add(newEdges);
+
+  if (node.remaining.length > 0) {
+    const n = network.body.data.nodes.get(id);
+    const parts = n.label.split('(')[0].trim();
+    n.label = `${parts} (${node.remaining.length} more)`;
+    network.body.data.nodes.update(n);
+  }
 }
