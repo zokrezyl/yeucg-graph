@@ -1,4 +1,3 @@
-
 const dataUrl = './clang.json';
 let fullData = {};
 let nodes = new vis.DataSet();
@@ -35,7 +34,7 @@ function buildIncomingReferences(data) {
           if (item && typeof item === 'object' && '__ref' in item) {
             const refId = item.__ref;
             if (data[refId]) {
-              console.log(`Adding incoming reference: ${refId} <- ${id}`);
+              // console.log(`Adding incoming reference: ${refId} <- ${id}`);
               data[refId].__meta.incoming.add(id);
               refCount++;
             }
@@ -44,7 +43,7 @@ function buildIncomingReferences(data) {
       } else if (val && typeof val === 'object' && '__ref' in val) {
         const refId = val.__ref;
         if (data[refId]) {
-          console.log(`Adding incoming reference: ${refId} <- ${id}`);
+          // console.log(`Adding incoming reference: ${refId} <- ${id}`);
           data[refId].__meta.incoming.add(id);
           refCount++;
         }
@@ -105,8 +104,10 @@ function showSubgraph(centerId) {
 
   addNode(centerId);
 
+  const obj = fullData[centerId];
   const forwardRefs = [];
-  for (const val of Object.values(fullData[centerId])) {
+
+  for (const val of Object.values(obj)) {
     if (Array.isArray(val)) {
       for (const item of val) {
         if (item && typeof item === 'object' && '__ref' in item) {
@@ -117,13 +118,15 @@ function showSubgraph(centerId) {
       forwardRefs.push(val.__ref);
     }
   }
-  console.log('Forward refs:', forwardRefs);
+
+  console.log('Forward refs:', forwardRefs.length);
 
   for (const refId of forwardRefs) {
     if (!(refId in fullData)) continue;
     addNode(refId);
     addEdge(centerId, refId);
   }
+  console.log('Done: Forward refs:', forwardRefs.length);
 
   const incoming = fullData[centerId].__meta.incoming || new Set();
   console.log('Incoming refs:', [...incoming]);
@@ -133,6 +136,7 @@ function showSubgraph(centerId) {
     addNode(fromId);
     addEdge(fromId, centerId);
   }
+  console.log('Done: Incoming refs:', [...incoming]);
 
   network.fit({ nodes: [centerId], animation: false });
 }
