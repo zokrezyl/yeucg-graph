@@ -139,8 +139,6 @@ function showSubgraph(centerId) {
     addEdge(fromId, centerId);
   }
 
-  console.log('Total nodes:', addedNodes.size);
-
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
 
@@ -178,8 +176,6 @@ function showSubgraph(centerId) {
       network.cluster(clusterOptions);
     }
   }
-  console.log('Clusters created:', Object.keys(clusterGroups).length);
-  network.fit();
 
-  // network.moveTo({ scale: 1.0 });
+  network.moveTo({ scale: 1.0 });
 }
