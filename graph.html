@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Clang JSON Graph Viewer</title>
+  <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/dist/vis-network.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.2/styles/vis-network.min.css" rel="stylesheet">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; font-family: sans-serif; }
+    #network { width: 100%; height: 100%; border: 1px solid lightgray; }
+  </style>
+</head>
+<body>
+  <div id="network"></div>
+
+  <script>
+    const dataUrl = 'clang.json'; // Change if needed
+    let fullData = {};
+    let nodes = new vis.DataSet();
+    let edges = new vis.DataSet();
+    let visited = new Set();
+
+    const network = new vis.Network(document.getElementById('network'), {
+      nodes: nodes,
+      edges: edges
+    }, {
+      layout: { improvedLayout: true },
+      interaction: { hover: true },
+      physics: { stabilization: true },
+    });
+
+    fetch(dataUrl)
+      .then(res => res.json())
+      .then(json => {
+        fullData = json;
+        if (Object.keys(json).length > 0) {
+          const rootId = Object.keys(json)[0];
+          expandNode(rootId);
+        }
+      });
+
+    function expandNode(id) {
+      if (visited.has(id) || !(id in fullData)) return;
+      visited.add(id);
+
+      const item = fullData[id];
+      nodes.add({ id, label: `${id}\n(${item.__meta?.type || '?'})` });
+
+      walkObject(id, item, (refId, field) => {
+        edges.add({ from: id, to: refId, label: field, arrows: 'to' });
+      });
+    }
+
+    function walkObject(parentId, obj, onRef) {
+      if (!obj || typeof obj !== 'object') return;
+      for (const [key, val] of Object.entries(obj)) {
+        if (val && typeof val === 'object') {
+          if ('__ref' in val) {
+            const refId = val.__ref;
+            nodes.update({ id: refId, label: refId, color: { background: '#eee' } });
+            onRef(refId, key);
+          } else {
+            walkObject(parentId, val, onRef);
+          }
+        } else if (Array.isArray(val)) {
+          val.forEach(entry => {
+            if (entry && typeof entry === 'object' && '__ref' in entry) {
+              const refId = entry.__ref;
+              nodes.update({ id: refId, label: refId, color: { background: '#eee' } });
+              onRef(refId, key);
+            }
+          });
+        }
+      }
+    }
+
+    network.on('doubleClick', function (params) {
+      if (params.nodes.length > 0) {
+        expandNode(params.nodes[0]);
+      }
+    });
+  </script>
+</body>
+</html>
