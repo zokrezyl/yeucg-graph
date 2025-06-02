@@ -62,10 +62,6 @@ function makeLabel(id, obj, isExpanded = false, isProxy = false) {
   let header = line1 ? `${line1}\n${line2}` : line2;
   if (!isExpanded) return header;
 
-  if (isProxy) {
-    return `❌ ${header}`;
-  }
-
   const fields = Object.entries(obj)
     .filter(([k]) => k !== '__meta')
     .map(([k, v]) => {
@@ -79,7 +75,7 @@ function makeLabel(id, obj, isExpanded = false, isProxy = false) {
       }
     });
 
-  return `❌ ${[header, ...fields].filter(Boolean).join('\n')}`;
+  return [header, ...fields].filter(Boolean).join('\n');
 }
 
 function getTypeColor(type) {
@@ -204,18 +200,19 @@ function showSubgraph(centerId, clear = true) {
       const nodeId = params.nodes[0];
       const node = network.body.data.nodes.get(nodeId);
       if (!node) return;
-      if (node.isExpanded) {
-        if (node.label.startsWith('❌')) {
-          network.body.data.nodes.remove(nodeId);
-          const edgesToRemove = network.body.data.edges.get().filter(e => e.from === nodeId || e.to === nodeId).map(e => e.id);
-          network.body.data.edges.remove(edgesToRemove);
-        }
-        return;
-      }
       const obj = fullData[node.proxy ? node.sourceId || node.targetId : nodeId] || {};
-      node.isExpanded = true;
-      node.label = makeLabel(nodeId, obj, true, !!node.proxy);
+      node.isExpanded = !node.isExpanded;
+      node.label = makeLabel(nodeId, obj, node.isExpanded, !!node.proxy);
       network.body.data.nodes.update(node);
+    });
+
+    network.on('oncontext', function (params) {
+      const pointer = network.getNodeAt(params.pointer.DOM);
+      if (!pointer) return;
+      params.event.preventDefault();
+      network.body.data.nodes.remove(pointer);
+      const toRemove = network.body.data.edges.get().filter(e => e.from === pointer || e.to === pointer).map(e => e.id);
+      network.body.data.edges.remove(toRemove);
     });
   } else {
     network.setData({ nodes: visNodes, edges: visEdges });
