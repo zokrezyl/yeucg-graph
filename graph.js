@@ -77,6 +77,10 @@ function showSubgraph(centerId) {
   const addedNodes = new Set();
   const addedEdges = new Set();
 
+  const clusterThreshold = 1000;
+  const clusterMap = new Map();
+  let forwardRefs = [];
+
   function addNode(id) {
     if (addedNodes.has(id)) return;
     addedNodes.add(id);
@@ -85,11 +89,11 @@ function showSubgraph(centerId) {
     nodeItems.push({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
   }
 
-  function addEdge(from, to) {
+  function addEdge(from, to, label = null) {
     const key = `${from}->${to}`;
     if (addedEdges.has(key)) return;
     addedEdges.add(key);
-    edgeItems.push({ from, to, arrows: 'to' });
+    edgeItems.push({ from, to, arrows: 'to', label });
   }
 
   if (!(centerId in fullData)) {
@@ -100,46 +104,62 @@ function showSubgraph(centerId) {
   const obj = fullData[centerId];
   addNode(centerId);
 
-  console.log('Processing node:', centerId, obj);
+  // Collect forward refs
   for (const val of Object.values(obj)) {
     if (Array.isArray(val)) {
       for (const item of val) {
         if (item && typeof item === 'object' && '__ref' in item) {
-          const refId = item.__ref;
-          if (refId in fullData) {
-            addNode(refId);
-            addEdge(centerId, refId);
-          }
+          forwardRefs.push(item.__ref);
         }
       }
     } else if (val && typeof val === 'object' && '__ref' in val) {
-      const refId = val.__ref;
-      if (refId in fullData) {
-        addNode(refId);
-        addEdge(centerId, refId);
-      }
+      forwardRefs.push(val.__ref);
     }
   }
-  console.log('Done addinng refs:', centerId, obj);
 
-  const incoming = fullData[centerId].__meta.incoming || new Set();
-  for (const fromId of incoming) {
-    if (!(fromId in fullData)) continue;
-    addNode(fromId);
-    addEdge(fromId, centerId);
+  if (forwardRefs.length > clusterThreshold) {
+    console.log(`Clustering ${forwardRefs.length} forward refs...`);
+    for (const refId of forwardRefs) {
+      const refObj = fullData[refId];
+      const kind = refObj?.kind || 'Other';
+      if (!clusterMap.has(kind)) clusterMap.set(kind, new Set());
+      clusterMap.get(kind).add(refId);
+    }
+    for (const [kind, members] of clusterMap.entries()) {
+      const clusterId = `${centerId}::cluster::${kind}`;
+      if (!addedNodes.has(clusterId)) {
+        nodeItems.push({ id: clusterId, label: `(${kind})`, color: '#ccc' });
+        addedNodes.add(clusterId);
+      }
+      addEdge(centerId, clusterId, 'kind');
+    }
+
+  console.log(`Clustering done`);
+  } else {
+
+    for (const refId of forwardRefs) {
+      if (!(refId in fullData)) continue;
+      addNode(refId);
+      addEdge(centerId, refId);
+    }
+      // allow incoming edges only when not clustering
+    const incoming = fullData[centerId].__meta.incoming || new Set();
+    for (const fromId of incoming) {
+      if (!(fromId in fullData)) continue;
+      addNode(fromId);
+      addEdge(fromId, centerId);
+    }
   }
-  console.log('Done addinng incomming:', centerId, obj);
+
 
   network.setData({
     nodes: new vis.DataSet(nodeItems),
     edges: new vis.DataSet(edgeItems),
   });
 
+  //network.moveTo({ scale: 0.5 });
 
-  console.log('Done addinng nodes to the visual:', centerId, obj);
- network.moveTo({ scale: 0.5 }); 
-  console.log('Done network moveTo :', centerId, obj);
-
+  network.fit({ nodes: [centerId], animation: false });
 }
 
 network.on('doubleClick', function (params) {
