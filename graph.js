@@ -5,8 +5,7 @@ let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const OUTGOING_THRESHOLD = 10; // Only show this many refs per array
-const INCOMING_THRESHOLD = 10; // Only show this many incoming refs
+const CLUSTER_THRESHOLD = 10; // Lower threshold for performance
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -23,7 +22,7 @@ fetch(dataUrl)
 function buildIncomingReferences(data) {
   for (const obj of Object.values(data)) {
     if (!obj.__meta) obj.__meta = {};
-    obj.__meta.incoming = new Set();
+    obj.__meta.incoming = [];
   }
 
   let refCount = 0;
@@ -34,7 +33,7 @@ function buildIncomingReferences(data) {
           if (item && typeof item === 'object' && '__ref' in item) {
             const refId = item.__ref;
             if (refId in data) {
-              data[refId].__meta.incoming.add(id);
+              data[refId].__meta.incoming.push({ from: id, via: key });
               refCount++;
             }
           }
@@ -42,7 +41,7 @@ function buildIncomingReferences(data) {
       } else if (val && typeof val === 'object' && '__ref' in val) {
         const refId = val.__ref;
         if (refId in data) {
-          data[refId].__meta.incoming.add(id);
+          data[refId].__meta.incoming.push({ from: id, via: key });
           refCount++;
         }
       }
@@ -106,6 +105,8 @@ function showSubgraph(centerId) {
   addNode(centerId);
   const obj = fullData[centerId];
 
+  let totalOutgoing = 0;
+
   for (const [key, val] of Object.entries(obj)) {
     if (Array.isArray(val)) {
       const virtualId = `${centerId}::field::${key}`;
@@ -115,12 +116,14 @@ function showSubgraph(centerId) {
 
       let count = 0;
       for (const item of val) {
+        if (count >= CLUSTER_THRESHOLD) break;
         if (item && typeof item === 'object' && '__ref' in item) {
-          if (count++ >= OUTGOING_THRESHOLD) break;
           const refId = item.__ref;
           if (!(refId in fullData)) continue;
           addNode(refId);
           addEdge(virtualId, refId);
+          count++;
+          totalOutgoing++;
         }
       }
     } else if (val && typeof val === 'object' && '__ref' in val) {
@@ -128,29 +131,34 @@ function showSubgraph(centerId) {
       if (refId in fullData) {
         addNode(refId);
         addEdge(centerId, refId, key);
+        totalOutgoing++;
       }
     }
   }
 
-  const incoming = fullData[centerId].__meta.incoming || new Set();
-  if (incoming.size > INCOMING_THRESHOLD) {
-    const virtualIncomingId = `${centerId}::virtual::incoming`;
-    nodeItems.push({ id: virtualIncomingId, label: '[incoming]', color: '#dddddd' });
-    edgeItems.push({ from: virtualIncomingId, to: centerId, arrows: 'to', label: 'incoming' });
+  const incoming = fullData[centerId].__meta.incoming || [];
+  if (incoming.length > CLUSTER_THRESHOLD) {
+    const proxyId = `${centerId}::incoming`;
+    nodeItems.push({ id: proxyId, label: '[incoming]', color: '#ddffdd' });
+    edgeItems.push({ from: proxyId, to: centerId, arrows: 'to' });
+
     let count = 0;
-    for (const fromId of incoming) {
-      if (!(fromId in fullData)) continue;
-      if (count++ >= INCOMING_THRESHOLD) break;
-      addNode(fromId);
-      addEdge(fromId, virtualIncomingId);
+    for (const { from, via } of incoming) {
+      if (count >= CLUSTER_THRESHOLD) break;
+      if (!(from in fullData)) continue;
+      addNode(from);
+      addEdge(from, proxyId, via);
+      count++;
     }
   } else {
-    for (const fromId of incoming) {
-      if (!(fromId in fullData)) continue;
-      addNode(fromId);
-      addEdge(fromId, centerId);
+    for (const { from, via } of incoming) {
+      if (!(from in fullData)) continue;
+      addNode(from);
+      addEdge(from, centerId, via);
     }
   }
+
+  console.log(`Total nodes: ${addedNodes.size}, edges: ${addedEdges.size}`);
 
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
@@ -171,6 +179,8 @@ function showSubgraph(centerId) {
       }
     });
   }
+
+  console.log('Network updated with new subgraph');
 
   network.moveTo({ scale: 1.0 });
 }
