@@ -1,3 +1,4 @@
+
 const dataUrl = './clang.json';
 let fullData = {};
 let nodes = new vis.DataSet();
@@ -34,7 +35,6 @@ function buildIncomingReferences(data) {
           if (item && typeof item === 'object' && '__ref' in item) {
             const refId = item.__ref;
             if (data[refId]) {
-              // console.log(`Adding incoming reference: ${refId} <- ${id}`);
               data[refId].__meta.incoming.add(id);
               refCount++;
             }
@@ -43,7 +43,6 @@ function buildIncomingReferences(data) {
       } else if (val && typeof val === 'object' && '__ref' in val) {
         const refId = val.__ref;
         if (data[refId]) {
-          // console.log(`Adding incoming reference: ${refId} <- ${id}`);
           data[refId].__meta.incoming.add(id);
           refCount++;
         }
@@ -86,7 +85,6 @@ function showSubgraph(centerId) {
     const obj = fullData[id];
     const type = obj?.__meta?.type || '?';
     nodes.add({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
-    //console.log(`Added node: ${id} (${type})`);
   }
 
   function addEdge(from, to) {
@@ -94,7 +92,6 @@ function showSubgraph(centerId) {
     if (addedEdges.has(key)) return;
     addedEdges.add(key);
     edges.add({ from, to, arrows: 'to' });
-    //console.log(`Added edge: ${from} -> ${to}`);
   }
 
   if (!(centerId in fullData)) {
@@ -102,44 +99,46 @@ function showSubgraph(centerId) {
     return;
   }
 
+  const obj = fullData[centerId];
   addNode(centerId);
 
-  const obj = fullData[centerId];
-  const forwardRefs = [];
-
+  console.log('Processing node: refs', centerId);
   for (const val of Object.values(obj)) {
     if (Array.isArray(val)) {
       for (const item of val) {
         if (item && typeof item === 'object' && '__ref' in item) {
-          forwardRefs.push(item.__ref);
+          const refId = item.__ref;
+          if (refId in fullData) {
+            addNode(refId);
+            addEdge(centerId, refId);
+          }
         }
       }
     } else if (val && typeof val === 'object' && '__ref' in val) {
-      forwardRefs.push(val.__ref);
+      const refId = val.__ref;
+      if (refId in fullData) {
+        addNode(refId);
+        addEdge(centerId, refId);
+      }
     }
   }
 
-  console.log('Forward refs:', forwardRefs.length);
-
-  for (const refId of forwardRefs) {
-    if (!(refId in fullData)) continue;
-    addNode(refId);
-    addEdge(centerId, refId);
-  }
-  console.log('Done: Forward refs:', forwardRefs.length);
-
+  console.log('Done: Processing node: refs', centerId);
   const incoming = fullData[centerId].__meta.incoming || new Set();
-  console.log('Incoming refs:', [...incoming]);
-
   for (const fromId of incoming) {
     if (!(fromId in fullData)) continue;
     addNode(fromId);
     addEdge(fromId, centerId);
   }
-  console.log('Done: Incoming refs:', [...incoming]);
 
+  console.log('Done Processing node:', centerId);
+  network.setData({ nodes: new vis.DataSet([...nodes]), edges: new vis.DataSet([...edges]) });
   network.fit({ nodes: [centerId], animation: false });
 }
+
+
+
+
 
 network.on('doubleClick', function (params) {
   if (params.nodes.length > 0) {
