@@ -5,7 +5,7 @@ let fullData = {}; // Holds the entire JSON content
 
 const container = document.getElementById('network');
 let network;
-const CLUSTER_THRESHOLD = 1000; // Only cluster if too many refs
+const CLUSTER_THRESHOLD = 1000; // Only cluster if too many outgoing refs
 
 // Fetch and process the JSON file
 fetch(dataUrl)
@@ -27,13 +27,13 @@ function buildIncomingReferences(data) {
 
   let refCount = 0;
   for (const [id, obj] of Object.entries(data)) {
-    for (const val of Object.values(obj)) {
+    for (const [key, val] of Object.entries(obj)) {
       if (Array.isArray(val)) {
         for (const item of val) {
           if (item && typeof item === 'object' && '__ref' in item) {
             const refId = item.__ref;
             if (refId in data) {
-              data[refId].__meta.incoming.add(id); // Track who references this object
+              data[refId].__meta.incoming.add(id);
               refCount++;
             }
           }
@@ -50,13 +50,11 @@ function buildIncomingReferences(data) {
   console.log('Total references indexed:', refCount);
 }
 
-// Create label text for node rendering
 function makeLabel(id, obj) {
   const type = obj.__meta?.type || '?';
   return `${id}\n(${type})`;
 }
 
-// Assign a color based on node type
 function getTypeColor(type) {
   const palette = {
     'TranslationUnit': '#FFD966',
@@ -70,30 +68,32 @@ function getTypeColor(type) {
   return palette[type] || '#E0E0E0';
 }
 
-// Populate and render a subgraph centered around a given node
 function showSubgraph(centerId) {
   console.clear();
   console.log('Opening node:', centerId);
 
   const addedNodes = new Set();
   const addedEdges = new Set();
-  const nodeItems = []; // Will batch node creation
-  const edgeItems = []; // Will batch edge creation
-  const clusteredNodeIds = new Set(); // Tracks nodes to hide in clusters
+  const nodeItems = [];
+  const edgeItems = [];
 
-  // Adds a node to the queue if not already added
-  function addNode(id, label, color) {
+  function addNode(id) {
     if (addedNodes.has(id)) return;
+    const obj = fullData[id];
+    if (!obj) {
+      console.warn(`Missing object for ID: ${id}`);
+      return;
+    }
     addedNodes.add(id);
-    nodeItems.push({ id, label, color });
+    const type = obj.__meta?.type || '?';
+    nodeItems.push({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
   }
 
-  // Adds a directed edge if not already added
-  function addEdge(from, to) {
+  function addEdge(from, to, label = '') {
     const key = `${from}->${to}`;
     if (addedEdges.has(key)) return;
     addedEdges.add(key);
-    edgeItems.push({ from, to, arrows: 'to' });
+    edgeItems.push({ from, to, arrows: 'to', label });
   }
 
   if (!(centerId in fullData)) {
@@ -101,122 +101,137 @@ function showSubgraph(centerId) {
     return;
   }
 
-  const centerObj = fullData[centerId];
-  addNode(centerId, makeLabel(centerId, centerObj), getTypeColor(centerObj.__meta?.type || '?'));
+  addNode(centerId);
+  const obj = fullData[centerId];
+  const outgoingRefs = [];
+  const clusterGroups = {};
+  const arrayVirtualNodes = new Set();
 
-  const clusterGroupsOut = {};
-  const clusterGroupsIn = {};
-  let totalOut = 0;
-  let totalIn = centerObj.__meta.incoming?.size || 0;
-
-  for (const [key, val] of Object.entries(centerObj)) {
-    if (key === '__meta') continue;
-
+  for (const [key, val] of Object.entries(obj)) {
     if (Array.isArray(val)) {
-      const virtualId = `${centerId}::field::${key}`;
-      addNode(virtualId, `Field: ${key}`, '#eeeeee');
-      addEdge(centerId, virtualId);
+      const virtualId = `${centerId}::array::${key}`;
+      nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee', font: { ital: true } });
+      addEdge(centerId, virtualId, key);
 
-      const outRefs = [];
       for (const item of val) {
         if (item && typeof item === 'object' && '__ref' in item) {
-          outRefs.push(item.__ref);
-        }
-      }
-      totalOut += outRefs.length;
-
-      const kindGroups = {};
-      for (const refId of outRefs) {
-        if (!(refId in fullData)) continue;
-        const kind = fullData[refId].kind || 'Other';
-        if (!kindGroups[kind]) kindGroups[kind] = [];
-        kindGroups[kind].push(refId);
-      }
-
-      if (outRefs.length > CLUSTER_THRESHOLD) {
-        for (const [kind, members] of Object.entries(kindGroups)) {
-          if (members.length > 1) {
-            const ids = new Set(members);
-            const clusterOptions = {
-              joinCondition: function (nodeOptions) {
-                return ids.has(nodeOptions.id);
-              },
-              clusterNodeProperties: {
-                id: `cluster-${virtualId}-${kind}`,
-                label: `Cluster: ${key}/${kind}`,
-                allowSingleNodeCluster: false,
-                color: '#ccccff'
-              }
-            };
-            for (const id of members) {
-              addNode(id, makeLabel(id, fullData[id]), getTypeColor(fullData[id].__meta?.type || '?'));
-              addEdge(virtualId, id);
-            }
-            clusteredNodeIds.add({ options: clusterOptions });
-          } else {
-            for (const id of members) {
-              addNode(id, makeLabel(id, fullData[id]), getTypeColor(fullData[id].__meta?.type || '?'));
-              addEdge(virtualId, id);
-            }
-          }
-        }
-      } else {
-        for (const refId of outRefs) {
-          if (!(refId in fullData)) continue;
-          addNode(refId, makeLabel(refId, fullData[refId]), getTypeColor(fullData[refId].__meta?.type || '?'));
-          addEdge(virtualId, refId);
+          const refId = item.__ref;
+          outgoingRefs.push({ field: key, refId, via: virtualId });
         }
       }
     } else if (val && typeof val === 'object' && '__ref' in val) {
       const refId = val.__ref;
-      if (!(refId in fullData)) continue;
-      addNode(refId, makeLabel(refId, fullData[refId]), getTypeColor(fullData[refId].__meta?.type || '?'));
-      addEdge(centerId, refId);
-      totalOut++;
-    }
-  }
-
-  const incoming = centerObj.__meta.incoming || new Set();
-  const incomingKindGroups = {};
-  for (const fromId of incoming) {
-    if (!(fromId in fullData)) continue;
-    const kind = fullData[fromId].kind || 'Other';
-    if (!incomingKindGroups[kind]) incomingKindGroups[kind] = [];
-    incomingKindGroups[kind].push(fromId);
-  }
-
-  if (totalIn > CLUSTER_THRESHOLD) {
-    for (const [kind, members] of Object.entries(incomingKindGroups)) {
-      if (members.length > 1) {
-        const ids = new Set(members);
-        const clusterOptions = {
-          joinCondition: function (nodeOptions) {
-            return ids.has(nodeOptions.id);
-          },
-          clusterNodeProperties: {
-            id: `cluster-in-${centerId}-${kind}`,
-            label: `Incoming: ${kind}`,
-            allowSingleNodeCluster: false,
-            color: '#ffe0e0'
-          }
-        };
-        for (const id of members) {
-          addNode(id, makeLabel(id, fullData[id]), getTypeColor(fullData[id].__meta?.type || '?'));
-          addEdge(id, centerId);
-        }
-        clusteredNodeIds.add({ options: clusterOptions });
-      } else {
-        for (const id of members) {
-          addNode(id, makeLabel(id, fullData[id]), getTypeColor(fullData[id].__meta?.type || '?'));
-          addEdge(id, centerId);
-        }
+      if (refId in fullData) {
+        addNode(refId);
+        addEdge(centerId, refId, key);
       }
     }
+  }
+
+  const totalOut = outgoingRefs.length;
+  if (totalOut > CLUSTER_THRESHOLD) {
+    for (const { field, refId, via } of outgoingRefs) {
+      if (!(refId in fullData)) continue;
+      const refObj = fullData[refId];
+      const kind = refObj.kind || 'Other';
+      if (!clusterGroups[kind]) clusterGroups[kind] = [];
+      clusterGroups[kind].push({ refId, via });
+    }
+
+    for (const [kind, entries] of Object.entries(clusterGroups)) {
+      if (entries.length <= 1) {
+        for (const { refId, via } of entries) {
+          addNode(refId);
+          addEdge(via, refId);
+        }
+        continue;
+      }
+
+      const members = entries.map(e => e.refId);
+      for (const id of members) addNode(id);
+      const tempData = new vis.DataSet(nodeItems);
+      const tempEdges = new vis.DataSet(edgeItems);
+      const tempNetwork = new vis.Network(document.createElement('div'), { nodes: tempData, edges: tempEdges });
+
+      const ids = new Set(members);
+      const clusterOptions = {
+        joinCondition: nodeOptions => ids.has(nodeOptions.id),
+        clusterNodeProperties: {
+          id: `cluster-${centerId}-${kind}`,
+          label: `Cluster: ${kind}`,
+          allowSingleNodeCluster: false,
+          color: '#ccccff'
+        }
+      };
+
+      tempNetwork.cluster(clusterOptions);
+      const clusteredNode = tempNetwork.body.data.nodes.get(`cluster-${centerId}-${kind}`);
+      nodeItems.push(clusteredNode);
+      addEdge(centerId, clusteredNode.id, '');
+    }
   } else {
-    for (const fromId of incoming) {
-      if (!(fromId in fullData)) continue;
-      addNode(fromId, makeLabel(fromId, fullData[fromId]), getTypeColor(fullData[fromId].__meta?.type || '?'));
-      addEdge(fromId, centerId);
+    for (const { refId, via, field } of outgoingRefs) {
+      if (!(refId in fullData)) continue;
+      addNode(refId);
+      addEdge(via, refId, field);
+    }
+  }
+
+  const incoming = fullData[centerId].__meta.incoming || new Set();
+  const incomingRefs = [];
+
+  for (const fromId of incoming) {
+    if (!(fromId in fullData)) continue;
+    const refObj = fullData[fromId];
+    for (const [key, val] of Object.entries(refObj)) {
+      if (Array.isArray(val)) {
+        for (const item of val) {
+          if (item && typeof item === 'object' && '__ref' in item && item.__ref === centerId) {
+            incomingRefs.push({ fromId, field: key });
+          }
+        }
+      } else if (val && typeof val === 'object' && '__ref' in val && val.__ref === centerId) {
+        addNode(fromId);
+        addEdge(fromId, centerId, key);
+      }
+    }
+  }
+
+  const totalIn = incomingRefs.length;
+  if (totalIn > CLUSTER_THRESHOLD) {
+    const groups = {};
+    for (const { fromId, field } of incomingRefs) {
+      const fromObj = fullData[fromId];
+      const kind = fromObj.kind || 'Other';
+      if (!groups[kind]) groups[kind] = [];
+      groups[kind].push(fromId);
+    }
+    for (const [kind, members] of Object.entries(groups)) {
+      for (const id of members) addNode(id);
+      const tempData = new vis.DataSet(nodeItems);
+      const tempEdges = new vis.DataSet(edgeItems);
+      const tempNetwork = new vis.Network(document.createElement('div'), { nodes: tempData, edges: tempEdges });
+
+      const ids = new Set(members);
+      const clusterOptions = {
+        joinCondition: nodeOptions => ids.has(nodeOptions.id),
+        clusterNodeProperties: {
+          id: `cluster-in-${centerId}-${kind}`,
+          label: `Cluster (in): ${kind}`,
+          allowSingleNodeCluster: false,
+          color: '#ffeecc'
+        }
+      };
+
+      tempNetwork.cluster(clusterOptions);
+      const clusteredNode = tempNetwork.body.data.nodes.get(`cluster-in-${centerId}-${kind}`);
+      nodeItems.push(clusteredNode);
+      addEdge(clusteredNode.id, centerId);
+    }
+  } else {
+    for (const { fromId, field } of incomingRefs) {
+      addNode(fromId);
+      addEdge(fromId, centerId, field);
     }
   }
 
@@ -242,12 +257,6 @@ function showSubgraph(centerId) {
         }
       }
     });
-  }
-
-  for (const entry of clusteredNodeIds) {
-    if (entry.options) {
-      network.cluster(entry.options);
-    }
   }
 
   network.moveTo({ scale: 1.0 });
