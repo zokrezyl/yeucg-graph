@@ -126,32 +126,38 @@ function showSubgraph(centerId) {
     }
   }
 
-  // Group referenced nodes by their 'kind'
-  for (const refId of outgoingRefs) {
-    if (!(refId in fullData)) continue;
-    const refObj = fullData[refId];
-    const kind = refObj.kind || 'Other';
-    if (!clusterGroups[kind]) {
-      clusterGroups[kind] = [];
-    }
-    clusterGroups[kind].push(refId);
-  }
-
   const totalOut = outgoingRefs.length;
 
-  // For large numbers of refs, apply clustering
-  for (const [kind, members] of Object.entries(clusterGroups)) {
-    if (totalOut > CLUSTER_THRESHOLD && members.length > 1) {
-      for (const id of members) {
-        clusteredNodeIds.add(id); // Mark for later clustering
+  // Only group for clustering if the total outgoing refs exceed threshold
+  if (totalOut > CLUSTER_THRESHOLD) {
+    for (const refId of outgoingRefs) {
+      if (!(refId in fullData)) continue;
+      const refObj = fullData[refId];
+      const kind = refObj.kind || 'Other';
+      if (!clusterGroups[kind]) {
+        clusterGroups[kind] = [];
       }
-    } else {
+      clusterGroups[kind].push(refId);
+    }
+
+    // Mark all for clustering
+    for (const [kind, members] of Object.entries(clusterGroups)) {
       for (const id of members) {
+        clusteredNodeIds.add(id);
         addNode(id);
         addEdge(centerId, id);
       }
     }
+  } else {
+    // Just add normally
+    for (const refId of outgoingRefs) {
+      if (!(refId in fullData)) continue;
+      addNode(refId);
+      addEdge(centerId, refId);
+    }
   }
+
+  console.log(`Total outgoing references from ${centerId}:`, totalOut);
 
   // Add incoming nodes and edges normally
   const incoming = fullData[centerId].__meta.incoming || new Set();
@@ -187,26 +193,26 @@ function showSubgraph(centerId) {
     });
   }
 
-  // Add clusters for large outgoing groups
+  // Create native clusters *only if* total outgoing exceeded threshold
   if (totalOut > CLUSTER_THRESHOLD) {
     for (const [kind, members] of Object.entries(clusterGroups)) {
-      if (members.length > 1) {
-        const ids = new Set(members);
-        const clusterOptions = {
-          joinCondition: function (nodeOptions) {
-            return ids.has(nodeOptions.id);
-          },
-          clusterNodeProperties: {
-            id: `cluster-${centerId}-${kind}`,
-            label: `Cluster: ${kind}`,
-            allowSingleNodeCluster: false,
-            color: '#ccccff'
-          }
-        };
-        network.cluster(clusterOptions); // Collapse group
-      }
+      const ids = new Set(members);
+      const clusterOptions = {
+        joinCondition: function (nodeOptions) {
+          return ids.has(nodeOptions.id);
+        },
+        clusterNodeProperties: {
+          id: `cluster-${centerId}-${kind}`,
+          label: `Cluster: ${kind}`,
+          allowSingleNodeCluster: false,
+          color: '#ccccff'
+        }
+      };
+      network.cluster(clusterOptions); // Collapse group
     }
+    console.log(`Created clusters for ${Object.keys(clusterGroups).length} kinds.`);
   }
+  console.log(`Total nodes added: ${addedNodes.size}, edges added: ${addedEdges.size}`);
 
   // Center viewport
   network.moveTo({ scale: 1.0 });
