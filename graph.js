@@ -18,7 +18,7 @@ fetch(dataUrl)
     buildIncomingReferences(json); // Precompute incoming references
     buildSearchIndex(json);       // Prepare search index
     const rootId = Object.keys(json)[0];
-    showSubgraph(rootId);         // Start with first node
+    showSubgraph(rootId, true);   // Start with first node
   });
 
 // Precompute incoming references as { id, field }
@@ -55,11 +55,12 @@ function buildIncomingReferences(data) {
 
 function makeLabel(id, obj) {
   const type = obj.__meta?.type || '?';
-  const kind = (obj.kind || '').split('.').pop();
+  const kind = obj.kind?.replace(/^(CursorKind|TypeKind)\./, '') || '';
   const name = obj.name || obj.displayname || obj.spelling || '';
   const line1 = name ? name : '';
-  const line2 = kind ? `(${id}::${type}, ${kind})` : `(${id}::${type})`;
-  return line1 ? `${line1}\n${line2}` : line2;
+  const line2 = kind ? `(${type}, ${kind})` : `(${type})`;
+  const line3 = `(${id})`;
+  return [line1, line2, line3].filter(Boolean).join('\n');
 }
 
 function getTypeColor(type) {
@@ -79,7 +80,7 @@ function buildSearchIndex(data) {
   nameToIdMap.length = 0;
   for (const [id, obj] of Object.entries(data)) {
     const type = obj.__meta?.type || '?';
-    const kind = (obj.kind || '').split('.').pop();
+    const kind = obj.kind?.replace(/^(CursorKind|TypeKind)\./, '') || '';
     const name = obj.name || obj.displayname || obj.spelling || '';
     const suffix = kind ? `${type}, ${kind}` : type;
     const label = name ? `${name} (${suffix})` : `(${id}::${suffix})`;
@@ -106,7 +107,7 @@ function buildSearchIndex(data) {
       li.textContent = match.item.label;
       li.style.cursor = 'pointer';
       li.addEventListener('click', () => {
-        showSubgraph(match.item.id);
+        showSubgraph(match.item.id, true);
         results.innerHTML = '';
         box.value = '';
       });
@@ -115,32 +116,31 @@ function buildSearchIndex(data) {
   });
 }
 
-function showSubgraph(centerId) {
-  console.clear();
+function showSubgraph(centerId, clear = true) {
+  if (clear) console.clear();
   console.log('Opening node:', centerId);
 
-  const addedNodes = new Set();
-  const addedEdges = new Set();
-  const nodeItems = [];
-  const edgeItems = [];
+  const nodeItems = clear ? [] : network.body.data.nodes.get();
+  const edgeItems = clear ? [] : network.body.data.edges.get();
+  const addedNodes = new Set(nodeItems.map(n => n.id));
+  const addedEdges = new Set(edgeItems.map(e => `${e.from}->${e.to}`));
+  const visNodes = clear ? new vis.DataSet() : network.body.data.nodes;
+  const visEdges = clear ? new vis.DataSet() : network.body.data.edges;
 
   function addNode(id) {
     if (addedNodes.has(id)) return;
     const obj = fullData[id];
-    if (!obj) {
-      console.warn(`Missing object for ID: ${id}`);
-      return;
-    }
+    if (!obj) return;
     addedNodes.add(id);
     const type = obj.__meta?.type || '?';
-    nodeItems.push({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
+    visNodes.update({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
   }
 
   function addEdge(from, to, label = '') {
     const key = `${from}->${to}`;
     if (addedEdges.has(key)) return;
     addedEdges.add(key);
-    edgeItems.push({ from, to, arrows: 'to', label });
+    visEdges.update({ from, to, arrows: 'to', label });
   }
 
   addNode(centerId);
@@ -153,8 +153,8 @@ function showSubgraph(centerId) {
       const initial = allRefs.slice(0, THRESHOLD);
       const remaining = allRefs.slice(THRESHOLD);
 
-      nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
-      edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
+      visNodes.update({ id: virtualId, label: `[${key}]`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
+      addEdge(centerId, virtualId, key);
 
       for (const refId of initial) {
         if (!(refId in fullData)) continue;
@@ -175,8 +175,9 @@ function showSubgraph(centerId) {
     const virtualId = `${centerId}::incoming`;
     const initial = incoming.slice(0, THRESHOLD);
     const remaining = incoming.slice(THRESHOLD);
-    nodeItems.push({ id: virtualId, label: `[incoming]`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
-    edgeItems.push({ from: virtualId, to: centerId, arrows: 'to', label: '' });
+
+    visNodes.update({ id: virtualId, label: `[incoming]`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
+    addEdge(virtualId, centerId);
 
     for (const { id: fromId, field } of initial) {
       if (!(fromId in fullData)) continue;
@@ -191,12 +192,7 @@ function showSubgraph(centerId) {
     }
   }
 
-  const visNodes = new vis.DataSet(nodeItems);
-  const visEdges = new vis.DataSet(edgeItems);
-
-  if (network) {
-    network.setData({ nodes: visNodes, edges: visEdges });
-  } else {
+  if (clear) {
     network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
       layout: { improvedLayout: false },
       interaction: { hover: true },
@@ -207,17 +203,17 @@ function showSubgraph(centerId) {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node = network.body.data.nodes.get(nodeId);
-
       if (!node) return;
 
-      if (network.isCluster(nodeId)) {
-        network.openCluster(nodeId);
-      } else if (node.proxy) {
+      if (node.proxy) {
         expandProxyNode(nodeId);
       } else {
-        showSubgraph(nodeId);
+        showSubgraph(nodeId, true);
       }
     });
+  } else {
+    network.body.data.nodes.update(visNodes.get());
+    network.body.data.edges.update(visEdges.get());
   }
 
   network.moveTo({ scale: 1.0 });
@@ -229,7 +225,6 @@ function expandProxyNode(id) {
 
   const newNodes = [];
   const newEdges = [];
-
   const nextBatch = node.remaining.splice(0, THRESHOLD);
 
   for (const refId of nextBatch) {
@@ -240,12 +235,12 @@ function expandProxyNode(id) {
   }
 
   network.body.data.nodes.update({ id, remaining: node.remaining });
-  network.body.data.nodes.add(newNodes);
-  network.body.data.edges.add(newEdges);
+  network.body.data.nodes.update(newNodes);
+  network.body.data.edges.update(newEdges);
 
   if (node.remaining.length > 0) {
     const n = network.body.data.nodes.get(id);
-    n.label = `${n.label.split('\n')[0]}\n…${node.remaining.length}`;
+    n.label = n.label.replace(/(…)?$/, `… (${node.remaining.length})`);
     network.body.data.nodes.update(n);
   }
 }
