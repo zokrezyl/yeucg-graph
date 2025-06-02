@@ -89,36 +89,37 @@ function showSubgraph(centerId) {
   network.fit({ nodes: [centerId], animation: true });
 }
 
-function walkObject(parentId, obj, onRef, keyPrefix = '') {
-  if (!obj || typeof obj !== 'object') return;
 
+function walkObject(parentId, obj, onRef, keyPrefix = '') {
   if (Array.isArray(obj)) {
     obj.forEach((entry, idx) => {
-      if (typeof entry === 'object' && entry !== null) {
+      if (entry && typeof entry === 'object') {
         if ('__ref' in entry) {
-          onRef(entry.__ref, keyPrefix);
+          onRef(entry.__ref, keyPrefix + `[${idx}]`);
         } else {
-          walkObject(parentId, entry, onRef, keyPrefix);
+          walkObject(parentId, entry, onRef, keyPrefix + `[${idx}]`);
         }
       }
     });
     return;
   }
 
+  if (!obj || typeof obj !== 'object') return;
+
   for (const [key, val] of Object.entries(obj)) {
-    const fullKey = keyPrefix ? keyPrefix + '.' + key : key;
-    if (val && typeof val === 'object') {
+    const fullKey = keyPrefix ? `${keyPrefix}.${key}` : key;
+
+    if (Array.isArray(val)) {
+      walkObject(parentId, val, onRef, fullKey);
+    } else if (val && typeof val === 'object') {
       if ('__ref' in val) {
         onRef(val.__ref, fullKey);
       } else {
         walkObject(parentId, val, onRef, fullKey);
       }
-    } else if (Array.isArray(val)) {
-      walkObject(parentId, val, onRef, fullKey);
     }
   }
 }
-
 network.on('doubleClick', function (params) {
   if (params.nodes.length > 0) {
     const clickedId = params.nodes[0];
