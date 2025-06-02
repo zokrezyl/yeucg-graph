@@ -55,9 +55,10 @@ function buildIncomingReferences(data) {
 
 function makeLabel(id, obj) {
   const type = obj.__meta?.type || '?';
+  const kind = (obj.kind || '').split('.').pop();
   const name = obj.name || obj.displayname || obj.spelling || '';
   const line1 = name ? name : '';
-  const line2 = `(${id}::${type})`;
+  const line2 = kind ? `(${id}::${type}, ${kind})` : `(${id}::${type})`;
   return line1 ? `${line1}\n${line2}` : line2;
 }
 
@@ -78,8 +79,10 @@ function buildSearchIndex(data) {
   nameToIdMap.length = 0;
   for (const [id, obj] of Object.entries(data)) {
     const type = obj.__meta?.type || '?';
+    const kind = (obj.kind || '').split('.').pop();
     const name = obj.name || obj.displayname || obj.spelling || '';
-    const label = name ? `${name} (${type})` : `(${id}::${type})`;
+    const suffix = kind ? `${type}, ${kind}` : type;
+    const label = name ? `${name} (${suffix})` : `(${id}::${suffix})`;
     nameToIdMap.push({ id, label });
   }
 
@@ -242,7 +245,7 @@ function expandProxyNode(id) {
 
   if (node.remaining.length > 0) {
     const n = network.body.data.nodes.get(id);
-    n.label = `${n.label.split('\n')[0]}\n(${node.remaining.length} more…)`;
+    n.label = `${n.label.split('\n')[0]}\n…${node.remaining.length}`;
     network.body.data.nodes.update(n);
   }
 }
