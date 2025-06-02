@@ -109,7 +109,8 @@ function showSubgraph(centerId) {
       const initial = allRefs.slice(0, THRESHOLD);
       const remaining = allRefs.slice(THRESHOLD);
 
-      nodeItems.push({ id: virtualId, label: `[${key}]`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
+      const label = remaining.length > 0 ? `[${key}]\n(click to expand ${remaining.length} more)` : `[${key}]`;
+      nodeItems.push({ id: virtualId, label, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
       edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
 
       for (const refId of initial) {
@@ -131,7 +132,8 @@ function showSubgraph(centerId) {
     const virtualId = `${centerId}::incoming`;
     const initial = incoming.slice(0, THRESHOLD);
     const remaining = incoming.slice(THRESHOLD);
-    nodeItems.push({ id: virtualId, label: `[incoming]`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
+    const label = `[incoming]\n(click to expand ${remaining.length} more)`;
+    nodeItems.push({ id: virtualId, label, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
     edgeItems.push({ from: virtualId, to: centerId, arrows: 'to', label: '' });
 
     for (const { id: fromId, field } of initial) {
@@ -195,13 +197,10 @@ function expandProxyNode(id) {
     newEdges.push({ from: id, to: refId, arrows: 'to' });
   }
 
-  network.body.data.nodes.update({ id, remaining: node.remaining });
+  const newLabel = node.label.replace(/\n\(click to expand.*\)?$/, '');
+  const updatedLabel = node.remaining.length > 0 ? `${newLabel}\n(click to expand ${node.remaining.length} more)` : newLabel;
+
+  network.body.data.nodes.update({ id, remaining: node.remaining, label: updatedLabel });
   network.body.data.nodes.add(newNodes);
   network.body.data.edges.add(newEdges);
-
-  if (node.remaining.length > 0) {
-    const n = network.body.data.nodes.get(id);
-    n.label = n.label.replace(/(…)?$/, '…');
-    network.body.data.nodes.update(n);
-  }
 }
