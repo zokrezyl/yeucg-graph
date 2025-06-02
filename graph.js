@@ -52,15 +52,19 @@ function buildIncomingReferences(data) {
   console.log('Total references indexed:', refCount);
 }
 
-function makeLabel(id, obj, isExpanded = false) {
+function makeLabel(id, obj, isExpanded = false, isProxy = false) {
   const type = obj.__meta?.type || '?';
   const kind = obj.kind || '';
   const kindShort = kind.replace(/^(CursorKind|TypeKind)\./, '');
   const name = obj.name || obj.displayname || obj.spelling || '';
   const line1 = name ? name : '';
   const line2 = `(${id}::${type}${kindShort ? '/' + kindShort : ''})`;
+  let header = line1 ? `${line1}\n${line2}` : line2;
+  if (!isExpanded) return header;
 
-  if (!isExpanded) return line1 ? `${line1}\n${line2}` : line2;
+  if (isProxy) {
+    return `❌ ${header}`;
+  }
 
   const fields = Object.entries(obj)
     .filter(([k]) => k !== '__meta')
@@ -75,7 +79,7 @@ function makeLabel(id, obj, isExpanded = false) {
       }
     });
 
-  return [`❌`, line1, line2, ...fields].filter(Boolean).join('\n');
+  return `❌ ${[header, ...fields].filter(Boolean).join('\n')}`;
 }
 
 function getTypeColor(type) {
@@ -131,7 +135,7 @@ function showSubgraph(centerId, clear = true) {
         const initial = allRefs.slice(0, THRESHOLD);
         const remaining = allRefs.slice(THRESHOLD);
 
-        nodeItems.push({ id: virtualId, label: `[${key}]${remaining.length > 0 ? '…' : ''}`, color: '#eeeeee', proxy: true, remaining, sourceId: centerId, field: key });
+        nodeItems.push({ id: virtualId, label: `[${key}]${remaining.length > 0 ? '…' : ''}`, color: '#eeeeee', proxy: true, isExpanded: false, remaining, sourceId: centerId, field: key });
         edgeItems.push({ from: centerId, to: virtualId, arrows: 'to', label: key });
       }
 
@@ -155,7 +159,7 @@ function showSubgraph(centerId, clear = true) {
     const initial = incoming.slice(0, THRESHOLD);
     const remaining = incoming.slice(THRESHOLD);
     if (!addedNodes.has(virtualId)) {
-      nodeItems.push({ id: virtualId, label: `[incoming]${remaining.length > 0 ? '…' : ''}`, color: '#eeeeee', proxy: true, remaining, targetId: centerId });
+      nodeItems.push({ id: virtualId, label: `[incoming]${remaining.length > 0 ? '…' : ''}`, color: '#eeeeee', proxy: true, isExpanded: false, remaining, targetId: centerId });
       edgeItems.push({ from: virtualId, to: centerId, arrows: 'to', label: '' });
     }
     for (const { id: fromId, field } of initial) {
@@ -199,18 +203,18 @@ function showSubgraph(centerId, clear = true) {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node = network.body.data.nodes.get(nodeId);
-      if (!node || node.proxy) return;
-
-      if (node.isExpanded && node.label.startsWith('❌')) {
-        network.body.data.nodes.remove(nodeId);
-        const toRemove = network.body.data.edges.get({ filter: e => e.from === nodeId || e.to === nodeId });
-        network.body.data.edges.remove(toRemove);
+      if (!node) return;
+      if (node.isExpanded) {
+        if (node.label.startsWith('❌')) {
+          network.body.data.nodes.remove(nodeId);
+          const edgesToRemove = network.body.data.edges.get().filter(e => e.from === nodeId || e.to === nodeId).map(e => e.id);
+          network.body.data.edges.remove(edgesToRemove);
+        }
         return;
       }
-
-      const obj = fullData[nodeId];
-      node.isExpanded = !node.isExpanded;
-      node.label = makeLabel(nodeId, obj, node.isExpanded);
+      const obj = fullData[node.proxy ? node.sourceId || node.targetId : nodeId] || {};
+      node.isExpanded = true;
+      node.label = makeLabel(nodeId, obj, true, !!node.proxy);
       network.body.data.nodes.update(node);
     });
   } else {
