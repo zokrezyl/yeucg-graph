@@ -1,8 +1,6 @@
 
 const dataUrl = './clang.json';
 let fullData = {};
-let reverseRefs = {};
-let forwardRefs = {};
 let nodes = new vis.DataSet();
 let edges = new vis.DataSet();
 
@@ -17,24 +15,43 @@ fetch(dataUrl)
   .then(res => res.json())
   .then(json => {
     fullData = json;
-    buildReferenceMaps(json);
-    if (Object.keys(json).length > 0) {
-      const rootId = Object.keys(json)[0];
-      showSubgraph(rootId);
-    }
+    console.log('Loaded nodes:', Object.keys(json).length);
+    buildIncomingReferences(json);
+    const rootId = Object.keys(json)[0];
+    showSubgraph(rootId);
   });
 
-function buildReferenceMaps(data) {
-  reverseRefs = {};
-  forwardRefs = {};
-  for (const [id, obj] of Object.entries(data)) {
-    forwardRefs[id] = new Set();
-    walkObject(id, obj, (refId) => {
-      forwardRefs[id].add(refId);
-      if (!(refId in reverseRefs)) reverseRefs[refId] = new Set();
-      reverseRefs[refId].add(id);
-    });
+function buildIncomingReferences(data) {
+  for (const obj of Object.values(data)) {
+    if (!obj.__meta) obj.__meta = {};
+    obj.__meta.incoming = new Set();
   }
+
+  let refCount = 0;
+  for (const [id, obj] of Object.entries(data)) {
+    for (const val of Object.values(obj)) {
+      if (Array.isArray(val)) {
+        for (const item of val) {
+          if (item && typeof item === 'object' && '__ref' in item) {
+            const refId = item.__ref;
+            if (data[refId]) {
+              console.log(`Adding incoming reference: ${refId} <- ${id}`);
+              data[refId].__meta.incoming.add(id);
+              refCount++;
+            }
+          }
+        }
+      } else if (val && typeof val === 'object' && '__ref' in val) {
+        const refId = val.__ref;
+        if (data[refId]) {
+          console.log(`Adding incoming reference: ${refId} <- ${id}`);
+          data[refId].__meta.incoming.add(id);
+          refCount++;
+        }
+      }
+    }
+  }
+  console.log('Total references indexed:', refCount);
 }
 
 function makeLabel(id, obj) {
@@ -56,70 +73,70 @@ function getTypeColor(type) {
 }
 
 function showSubgraph(centerId) {
+  console.clear();
+  console.log('Opening node:', centerId);
   nodes.clear();
   edges.clear();
-  if (!(centerId in fullData)) return;
 
-  const center = fullData[centerId];
-  const centerType = center.__meta?.type || '?';
-  nodes.add({ id: centerId, label: makeLabel(centerId, center), color: getTypeColor(centerType) });
+  const addedNodes = new Set();
+  const addedEdges = new Set();
 
-  if (forwardRefs[centerId]) {
-    forwardRefs[centerId].forEach(refId => {
-      if (refId in fullData) {
-        const ref = fullData[refId];
-        const refType = ref.__meta?.type || '?';
-        nodes.add({ id: refId, label: makeLabel(refId, ref), color: getTypeColor(refType) });
-        edges.add({ from: centerId, to: refId, label: 'refers', arrows: 'to' });
-      }
-    });
+  function addNode(id) {
+    if (addedNodes.has(id)) return;
+    addedNodes.add(id);
+    const obj = fullData[id];
+    const type = obj?.__meta?.type || '?';
+    nodes.add({ id, label: makeLabel(id, obj), color: getTypeColor(type) });
+    //console.log(`Added node: ${id} (${type})`);
   }
 
-  if (reverseRefs[centerId]) {
-    reverseRefs[centerId].forEach(fromId => {
-      if (fromId in fullData) {
-        const from = fullData[fromId];
-        const fromType = from.__meta?.type || '?';
-        nodes.add({ id: fromId, label: makeLabel(fromId, from), color: getTypeColor(fromType) });
-        edges.add({ from: fromId, to: centerId, label: 'refers', arrows: 'to' });
-      }
-    });
+  function addEdge(from, to) {
+    const key = `${from}->${to}`;
+    if (addedEdges.has(key)) return;
+    addedEdges.add(key);
+    edges.add({ from, to, arrows: 'to' });
+    //console.log(`Added edge: ${from} -> ${to}`);
   }
 
-  network.fit({ nodes: [centerId], animation: true });
-}
-
-
-function walkObject(parentId, obj, onRef, keyPrefix = '') {
-  if (Array.isArray(obj)) {
-    obj.forEach((entry, idx) => {
-      if (entry && typeof entry === 'object') {
-        if ('__ref' in entry) {
-          onRef(entry.__ref, keyPrefix + `[${idx}]`);
-        } else {
-          walkObject(parentId, entry, onRef, keyPrefix + `[${idx}]`);
-        }
-      }
-    });
+  if (!(centerId in fullData)) {
+    console.warn('Missing centerId:', centerId);
     return;
   }
 
-  if (!obj || typeof obj !== 'object') return;
+  addNode(centerId);
 
-  for (const [key, val] of Object.entries(obj)) {
-    const fullKey = keyPrefix ? `${keyPrefix}.${key}` : key;
-
+  const forwardRefs = [];
+  for (const val of Object.values(fullData[centerId])) {
     if (Array.isArray(val)) {
-      walkObject(parentId, val, onRef, fullKey);
-    } else if (val && typeof val === 'object') {
-      if ('__ref' in val) {
-        onRef(val.__ref, fullKey);
-      } else {
-        walkObject(parentId, val, onRef, fullKey);
+      for (const item of val) {
+        if (item && typeof item === 'object' && '__ref' in item) {
+          forwardRefs.push(item.__ref);
+        }
       }
+    } else if (val && typeof val === 'object' && '__ref' in val) {
+      forwardRefs.push(val.__ref);
     }
   }
+  console.log('Forward refs:', forwardRefs);
+
+  for (const refId of forwardRefs) {
+    if (!(refId in fullData)) continue;
+    addNode(refId);
+    addEdge(centerId, refId);
+  }
+
+  const incoming = fullData[centerId].__meta.incoming || new Set();
+  console.log('Incoming refs:', [...incoming]);
+
+  for (const fromId of incoming) {
+    if (!(fromId in fullData)) continue;
+    addNode(fromId);
+    addEdge(fromId, centerId);
+  }
+
+  network.fit({ nodes: [centerId], animation: false });
 }
+
 network.on('doubleClick', function (params) {
   if (params.nodes.length > 0) {
     const clickedId = params.nodes[0];
