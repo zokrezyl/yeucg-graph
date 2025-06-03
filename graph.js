@@ -1,37 +1,35 @@
 
-// graph.js – full file with hover tooltip support
+// graph.js – full file, single-click now expands / drills-down
 // -----------------------------------------------------------------------------
 // Public functions:
 //
 //   • showSubgraph(centerId, clear = true)
 //   • expandProxyNode(id)
 //
-// Changes added in this version:
-//   • New helper ensureTooltipDiv() – creates a hidden <div id="vis-tooltip">
-//   • network.on('hoverNode' / 'blurNode') – shows / hides the tooltip.
-//     The tooltip content is makeLabel(nodeId, obj, /*isExpanded=*/true)
-//     positioned just above the mouse pointer.
+// Changes in this version:
+//   • 'click' handler now does what 'doubleClick' did:
+//       • proxy node  → expandProxyNode()
+//       • real node   → showSubgraph(nodeId, false)
+//   • 'doubleClick' handler disabled to avoid duplicate actions.
+//   • Removed label-toggle-on-click logic.
 //
-// All existing behaviour (skip empty proxy lists, click/double-click logic)
-// remains untouched.
+// Hover tooltip logic and all previous fixes remain.
 
 /* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
 
 
 /*───────────────────────────────────────────────────────────────────
-  Tooltip helper – create once
+  Tooltip helper – unchanged
 ───────────────────────────────────────────────────────────────────*/
 let tooltipDiv = null;
-
 function ensureTooltipDiv() {
   if (tooltipDiv) return;
   tooltipDiv = document.createElement('div');
-  tooltipDiv.id = 'vis-tooltip';
   Object.assign(tooltipDiv.style, {
     position: 'fixed',
     zIndex: 1001,
     maxWidth: '300px',
-    whiteSpace: 'pre',      // respect \n in makeLabel output
+    whiteSpace: 'pre',
     background: 'rgba(255,255,255,0.9)',
     border: '1px solid #999',
     borderRadius: '4px',
@@ -45,7 +43,7 @@ function ensureTooltipDiv() {
 }
 
 /*───────────────────────────────────────────────────────────────────
-  showSubgraph – renders nodes & edges around a centerId
+  showSubgraph – unchanged except earlier tweaks (skip empty arrays)
 ───────────────────────────────────────────────────────────────────*/
 function showSubgraph(centerId, clear = true) {
   const addedNodes = new Set(clear ? [] : network?.body?.data?.nodes.getIds());
@@ -85,7 +83,6 @@ function showSubgraph(centerId, clear = true) {
     if (!shouldExpandField(obj.__meta?.type, key)) continue;
 
     if (Array.isArray(val)) {
-      /* Skip arrays with no refs */
       const allRefs = val
         .filter(v => v && typeof v === 'object' && '__ref' in v)
         .map(v => v.__ref);
@@ -127,7 +124,7 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
-  /*── incoming references ──────────────────────────────────────*/
+  /*── incoming references – unchanged ──────────────────────────*/
   const incoming = obj.__meta?.incoming || [];
   if (incoming.length > THRESHOLD) {
     const virtualId = `${centerId}::incoming`;
@@ -168,13 +165,18 @@ function showSubgraph(centerId, clear = true) {
       { nodes: visNodes, edges: visEdges },
       {
         layout: { improvedLayout: false },
-        interaction: { hover: true },        // hover already enabled
+        interaction: { hover: true },
         physics: { stabilization: true }
       }
     );
 
-    /* double-click: proxy → expand; real → add subgraph */
-    network.on('doubleClick', params => {
+    /* double-click (disabled to prevent duplicate action) */
+    network.on('doubleClick', () => {
+      /* intentionally left blank */
+    });
+
+    /* SINGLE click – now handles expand/drill-down */
+    network.on('click', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node   = network.body.data.nodes.get(nodeId);
@@ -187,19 +189,7 @@ function showSubgraph(centerId, clear = true) {
       }
     });
 
-    /* click: toggle label only on real nodes */
-    network.on('click', params => {
-      if (params.nodes.length === 0) return;
-      const nodeId = params.nodes[0];
-      const node   = network.body.data.nodes.get(nodeId);
-      if (!node || node.proxy) return;
-      const obj = fullData[nodeId] || {};
-      node.isExpanded = !node.isExpanded;
-      node.label = makeLabel(nodeId, obj, node.isExpanded, false);
-      network.body.data.nodes.update(node);
-    });
-
-    /* hover: show tooltip */
+    /* hover tool-tip – unchanged */
     ensureTooltipDiv();
     network.on('hoverNode', params => {
       const nodeId = params.node;
@@ -217,7 +207,7 @@ function showSubgraph(centerId, clear = true) {
       tooltipDiv.style.display = 'none';
     });
 
-    /* right-click remove node (unchanged) */
+    /* right-click remove node – unchanged */
     network.on('oncontext', params => {
       const pointer = network.getNodeAt(params.pointer.DOM);
       if (!pointer) return;
