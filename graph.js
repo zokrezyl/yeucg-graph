@@ -6,12 +6,11 @@
 //   • showSubgraph(centerId, clear = true)
 //   • expandProxyNode(id)
 //
-// Change log:
-//   • In showSubgraph → when encountering an Array field, we now compute
-//     `allRefs` (refs with __ref) and **create a proxy node only if
-//     allRefs.length > 0**. This prevents empty proxy nodes.
+// Event handling changes:
+//   • Double-click: proxy → expandProxyNode; real node → showSubgraph(clear=false)
+//   • Click: proxy nodes do nothing; real nodes toggle label.
 //
-// No other logic is altered.
+// All underlying logic (skip empty arrays, THRESHOLD, etc.) remains the same.
 
 /* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
 
@@ -57,12 +56,11 @@ function showSubgraph(centerId, clear = true) {
     if (!shouldExpandField(obj.__meta?.type, key)) continue;
 
     if (Array.isArray(val)) {
-      /* NEW: build list of refs first and skip if empty */
+      /* Skip arrays with no refs */
       const allRefs = val
         .filter(v => v && typeof v === 'object' && '__ref' in v)
         .map(v => v.__ref);
-
-      if (allRefs.length === 0) continue;        // ← skip empty lists
+      if (allRefs.length === 0) continue;
 
       const virtualId = `${centerId}::field::${key}`;
       if (!addedNodes.has(virtualId)) {
@@ -86,7 +84,6 @@ function showSubgraph(centerId, clear = true) {
         });
       }
 
-      /* add first batch of real nodes */
       for (const refId of allRefs.slice(0, THRESHOLD)) {
         if (!(refId in fullData)) continue;
         addNode(refId);
@@ -101,7 +98,7 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
-  /*── incoming references (unchanged) ──────────────────────────*/
+  /*── incoming references ──────────────────────────────────────*/
   const incoming = obj.__meta?.incoming || [];
   if (incoming.length > THRESHOLD) {
     const virtualId = `${centerId}::incoming`;
@@ -147,32 +144,34 @@ function showSubgraph(centerId, clear = true) {
       }
     );
 
-    /* double-click / click / context menu handlers unchanged */
+    /* double-click: expand proxy OR add subgraph */
     network.on('doubleClick', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node   = network.body.data.nodes.get(nodeId);
       if (!node) return;
+
       if (node.proxy) {
-        expandProxyNode(nodeId);
-      }
-      else {
-        showSubgraph(nodeId, false);
+        expandProxyNode(nodeId);         // just expand batch
+      } else {
+        showSubgraph(nodeId, false);     // keep existing graph
       }
     });
 
+    /* single click: toggle label only for real nodes */
     network.on('click', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node   = network.body.data.nodes.get(nodeId);
-      if (!node) return;
-      const realId = node.proxy ? node.sourceId || node.targetId : nodeId;
-      const realObj = fullData[realId] || {};
+      if (!node || node.proxy) return;   // ignore proxies
+
+      const obj = fullData[nodeId] || {};
       node.isExpanded = !node.isExpanded;
-      node.label = makeLabel(nodeId, realObj, node.isExpanded, !!node.proxy);
+      node.label = makeLabel(nodeId, obj, node.isExpanded, false);
       network.body.data.nodes.update(node);
     });
 
+    /* right-click remove node (unchanged) */
     network.on('oncontext', params => {
       const pointer = network.getNodeAt(params.pointer.DOM);
       if (!pointer) return;
