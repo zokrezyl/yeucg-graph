@@ -1,19 +1,48 @@
 
-// graph.js – full file
+// graph.js – full file with hover tooltip support
 // -----------------------------------------------------------------------------
 // Public functions:
 //
 //   • showSubgraph(centerId, clear = true)
 //   • expandProxyNode(id)
 //
-// Event handling changes:
-//   • Double-click: proxy → expandProxyNode; real node → showSubgraph(clear=false)
-//   • Click: proxy nodes do nothing; real nodes toggle label.
+// Changes added in this version:
+//   • New helper ensureTooltipDiv() – creates a hidden <div id="vis-tooltip">
+//   • network.on('hoverNode' / 'blurNode') – shows / hides the tooltip.
+//     The tooltip content is makeLabel(nodeId, obj, /*isExpanded=*/true)
+//     positioned just above the mouse pointer.
 //
-// All underlying logic (skip empty arrays, THRESHOLD, etc.) remains the same.
+// All existing behaviour (skip empty proxy lists, click/double-click logic)
+// remains untouched.
 
 /* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
 
+
+/*───────────────────────────────────────────────────────────────────
+  Tooltip helper – create once
+───────────────────────────────────────────────────────────────────*/
+let tooltipDiv = null;
+
+function ensureTooltipDiv() {
+  if (tooltipDiv) return;
+  tooltipDiv = document.createElement('div');
+  tooltipDiv.id = 'vis-tooltip';
+  Object.assign(tooltipDiv.style, {
+    position: 'fixed',
+    zIndex: 1001,
+    maxWidth: '300px',
+    whiteSpace: 'pre',      // respect \n in makeLabel output
+    background: 'rgba(255,255,255,0.9)',
+    border: '1px solid #999',
+    borderRadius: '4px',
+    padding: '4px 6px',
+    fontSize: '0.75em',
+    fontFamily: 'monospace',
+    pointerEvents: 'none',
+    display: 'none'
+  });
+  document.body.appendChild(tooltipDiv);
+}
 
 /*───────────────────────────────────────────────────────────────────
   showSubgraph – renders nodes & edges around a centerId
@@ -139,12 +168,12 @@ function showSubgraph(centerId, clear = true) {
       { nodes: visNodes, edges: visEdges },
       {
         layout: { improvedLayout: false },
-        interaction: { hover: true },
+        interaction: { hover: true },        // hover already enabled
         physics: { stabilization: true }
       }
     );
 
-    /* double-click: expand proxy OR add subgraph */
+    /* double-click: proxy → expand; real → add subgraph */
     network.on('doubleClick', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
@@ -152,23 +181,40 @@ function showSubgraph(centerId, clear = true) {
       if (!node) return;
 
       if (node.proxy) {
-        expandProxyNode(nodeId);         // just expand batch
+        expandProxyNode(nodeId);
       } else {
-        showSubgraph(nodeId, false);     // keep existing graph
+        showSubgraph(nodeId, false);
       }
     });
 
-    /* single click: toggle label only for real nodes */
+    /* click: toggle label only on real nodes */
     network.on('click', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node   = network.body.data.nodes.get(nodeId);
-      if (!node || node.proxy) return;   // ignore proxies
-
+      if (!node || node.proxy) return;
       const obj = fullData[nodeId] || {};
       node.isExpanded = !node.isExpanded;
       node.label = makeLabel(nodeId, obj, node.isExpanded, false);
       network.body.data.nodes.update(node);
+    });
+
+    /* hover: show tooltip */
+    ensureTooltipDiv();
+    network.on('hoverNode', params => {
+      const nodeId = params.node;
+      const node   = network.body.data.nodes.get(nodeId);
+      if (!node) return;
+
+      const realId = node.proxy ? node.sourceId || node.targetId : nodeId;
+      const obj    = fullData[realId] || {};
+      tooltipDiv.textContent = makeLabel(nodeId, obj, true, !!node.proxy);
+      tooltipDiv.style.left  = `${params.event.pageX + 8}px`;
+      tooltipDiv.style.top   = `${params.event.pageY - 12}px`;
+      tooltipDiv.style.display = 'block';
+    });
+    network.on('blurNode', () => {
+      tooltipDiv.style.display = 'none';
     });
 
     /* right-click remove node (unchanged) */
