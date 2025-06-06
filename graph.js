@@ -1,23 +1,21 @@
 
-// graph.js – full file with click vs. double-click behavior swapped
+// graph.js – full file with click‐based tooltip fixed
 // -----------------------------------------------------------------------------
 // Public functions:
 //
 //   • showSubgraph(centerId, clear = true)
 //   • expandProxyNode(id)
 //
-// Changes in this version:
-//   • 'click' handler does not expand or drill-down—the hover tooltip remains the only click effect.
-//   • 'doubleClick' handler now handles expansion:
-//       • proxy node  → expandProxyNode()
-//       • real node   → showSubgraph(nodeId, false)
+// Changes (only): the click‐tooltip now reads coordinates from
+// `params.event.srcEvent` instead of `params.event` so it actually appears.
+//
+// All other logic (double‐click expand, skipping empty proxies, context‐menu delete, etc.) is unchanged.
 
- /* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
+/* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
 
-
-
+ 
 /*───────────────────────────────────────────────────────────────────
-  Tooltip helper – unchanged
+  Tooltip helper – creates a hidden <div> for click‐based display
 ───────────────────────────────────────────────────────────────────*/
 let tooltipDiv = null;
 function ensureTooltipDiv() {
@@ -27,14 +25,14 @@ function ensureTooltipDiv() {
     position: 'fixed',
     zIndex: 1001,
     maxWidth: '300px',
-    whiteSpace: 'pre',
+    whiteSpace: 'pre',   // preserve line breaks from makeLabel
     background: 'rgba(255,255,255,0.9)',
     border: '1px solid #999',
     borderRadius: '4px',
     padding: '4px 6px',
     fontSize: '0.75em',
     fontFamily: 'monospace',
-    pointerEvents: 'none',
+    pointerEvents: 'none', // click through
     display: 'none'
   });
   document.body.appendChild(tooltipDiv);
@@ -44,11 +42,13 @@ function ensureTooltipDiv() {
   showSubgraph – renders nodes & edges around a centerId
 ───────────────────────────────────────────────────────────────────*/
 function showSubgraph(centerId, clear = true) {
+  // Track which nodes/edges already exist to avoid duplicates
   const addedNodes = new Set(clear ? [] : network?.body?.data?.nodes.getIds());
   const addedEdges = new Set(
     clear ? [] : network?.body?.data?.edges.get().map(e => `${e.from}->${e.to}`)
   );
 
+  // If clear = true, start fresh arrays; otherwise reuse existing for accumulation
   const nodeItems = clear ? [] : network.body.data.nodes.get();
   const edgeItems = clear ? [] : network.body.data.edges.get();
 
@@ -73,15 +73,15 @@ function showSubgraph(centerId, clear = true) {
     edgeItems.push({ from, to, arrows: 'to', label });
   }
 
+  // Always add the center node first
   addNode(centerId);
   const obj = fullData[centerId];
 
-  /*── outgoing references ──────────────────────────────────────*/
+  /*── Outgoing references: arrays or single __ref ────────────────────*/
   for (const [key, val] of Object.entries(obj)) {
     if (!shouldExpandField(obj.__meta?.type, key)) continue;
 
     if (Array.isArray(val)) {
-      // Build list of __ref targets; skip if empty
       const allRefs = val
         .filter(v => v && typeof v === 'object' && '__ref' in v)
         .map(v => v.__ref);
@@ -123,7 +123,7 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
-  /*── incoming references ──────────────────────────────────────*/
+  /*── Incoming references: nodes pointing back to this center ───────*/
   const incoming = obj.__meta?.incoming || [];
   if (incoming.length > THRESHOLD) {
     const virtualId = `${centerId}::incoming`;
@@ -154,32 +154,61 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
-  /*── build vis.js datasets ────────────────────────────────────*/
+  /*── Build vis.js DataSets ────────────────────────────────────*/
   const visNodes = new vis.DataSet(nodeItems);
   const visEdges = new vis.DataSet(edgeItems);
 
   if (clear || !network) {
+    // First time or clearing: create the Network
     network = new vis.Network(
       document.getElementById('network'),
       { nodes: visNodes, edges: visEdges },
       {
         layout: { improvedLayout: false },
-        interaction: { hover: true },
+        interaction: { hover: false }, // hover disabled (tooltip on click)
         physics: { stabilization: true }
       }
     );
 
-    /* single-click – no expand/drill-down; tooltip is on hover only */
-    network.on('click', () => {
-      // Intentionally empty: click no longer expands or drills down.
-    });
+    /* Single-click: show/hide tooltip based on clicked node */
+    ensureTooltipDiv();
+    network.on('click', params => {
+      // If click on empty space, hide tooltip
+      if (!params.nodes || params.nodes.length === 0) {
+        tooltipDiv.style.display = 'none';
+        return;
+      }
 
-    /* double-click – expand or drill-down */
-    network.on('doubleClick', params => {
-      if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node   = network.body.data.nodes.get(nodeId);
       if (!node) return;
+
+      // Determine “real” ID for expanded label
+      const realId = node.proxy ? node.sourceId || node.targetId : nodeId;
+      const obj    = fullData[realId] || {};
+
+      // Generate the full expanded label
+      tooltipDiv.textContent = makeLabel(nodeId, obj, true, !!node.proxy);
+
+      // Position tooltip near the click using srcEvent coordinates
+      const evt = params.event && params.event.srcEvent;
+      if (evt) {
+        tooltipDiv.style.left  = `${evt.pageX + 8}px`;
+        const yPos = evt.pageY - 12;
+        tooltipDiv.style.top   = yPos < 0 ? '4px' : `${yPos}px`;
+      }
+      tooltipDiv.style.display = 'block';
+    });
+
+    /* Double-click: proxy → expand next batch; real → subgraph drill‐down */
+    network.on('doubleClick', params => {
+      if (!params.nodes || params.nodes.length === 0) return;
+      const nodeId = params.nodes[0];
+      const node   = network.body.data.nodes.get(nodeId);
+      if (!node) return;
+
+      // Hide tooltip when expanding/drilling
+      tooltipDiv.style.display = 'none';
 
       if (node.proxy) {
         expandProxyNode(nodeId);
@@ -188,25 +217,7 @@ function showSubgraph(centerId, clear = true) {
       }
     });
 
-    /* hover – show tooltip with expanded label */
-    ensureTooltipDiv();
-    network.on('hoverNode', params => {
-      const nodeId = params.node;
-      const node   = network.body.data.nodes.get(nodeId);
-      if (!node) return;
-
-      const realId = node.proxy ? node.sourceId || node.targetId : nodeId;
-      const obj    = fullData[realId] || {};
-      tooltipDiv.textContent = makeLabel(nodeId, obj, true, !!node.proxy);
-      tooltipDiv.style.left  = `${params.event.pageX + 8}px`;
-      tooltipDiv.style.top   = `${params.event.pageY - 12}px`;
-      tooltipDiv.style.display = 'block';
-    });
-    network.on('blurNode', () => {
-      tooltipDiv.style.display = 'none';
-    });
-
-    /* right-click – remove node (unchanged) */
+    /* Right-click (contextmenu): remove node and its edges */
     network.on('oncontext', params => {
       const pointer = network.getNodeAt(params.pointer.DOM);
       if (!pointer) return;
@@ -219,14 +230,16 @@ function showSubgraph(centerId, clear = true) {
       network.body.data.edges.remove(toRemove);
     });
   } else {
+    // Subsequent calls (clear=false) just update the data
     network.setData({ nodes: visNodes, edges: visEdges });
   }
 
+  // Always reset zoom/pan to show the full current subgraph
   network.moveTo({ scale: 1.0 });
 }
 
 /*───────────────────────────────────────────────────────────────────
-  expandProxyNode – unchanged
+  expandProxyNode – adds the next batch of children under a proxy
 ───────────────────────────────────────────────────────────────────*/
 function expandProxyNode(id) {
   const node = network.body.data.nodes.get(id);
