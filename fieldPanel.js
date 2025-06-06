@@ -1,172 +1,111 @@
 
-// fieldPanel.js – full file, columns now ~50% narrower
+// fieldPanel.js
 // -----------------------------------------------------------------------------
-// Public functions kept exactly:
-//
+// Public functions:
 //   • shouldExpandField(type, field)
 //   • updateEdgesByField(type, field, visible)
 //   • buildFieldPanel(data)
 //
-// Helpers:
-//   • loadSavedState, saveFieldState, savePanelHiddenState
-//   • ensureToggleButton(panel)
-//
-// Visual tweaks:
-//   • Column widths 90-110 px (half of prior 180-220)
-//   • Column gap 0.8 rem
-//   • Font-size still 0.8 em
-//   • All persistence logic untouched
+// The #field-controls element is initially hidden. Calling buildFieldPanel(data)
+// populates it but does not show it on its own.
 
-/* global fullData, network, fieldVisibility */
+window.fieldVisibility = window.fieldVisibility || {};
 
-/*──── localStorage helpers ───────────────────────────────────────*/
-const LS_KEY_VISIBILITY = 'fieldPanel_visibility';
-const LS_KEY_HIDDEN     = 'fieldPanel_hidden';
-
-function loadSavedState() {
-  try {
-    const vis = JSON.parse(localStorage.getItem(LS_KEY_VISIBILITY) || '{}');
-    Object.assign(fieldVisibility, vis);
-  } catch (_) {}
-}
-function saveFieldState() {
-  try { localStorage.setItem(LS_KEY_VISIBILITY, JSON.stringify(fieldVisibility)); }
-  catch (_) {}
-}
-function savePanelHiddenState(hidden) {
-  try { localStorage.setItem(LS_KEY_HIDDEN, hidden ? '1' : '0'); }
-  catch (_) {}
-}
-
-/*──── toggle button (top-right) ─────────────────────────────────*/
-function ensureToggleButton(panel) {
-  let btn = document.getElementById('field-toggle-btn');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'field-toggle-btn';
-    btn.textContent = '☰ Fields';
-    Object.assign(btn.style, {
-      position: 'fixed',
-      top: '8px',
-      right: '8px',
-      zIndex: 1000,
-      padding: '4px 8px',
-      fontSize: '0.9em',
-      cursor: 'pointer'
-    });
-    document.body.appendChild(btn);
-  }
-  btn.onclick = () => {
-    const nowHidden = panel.dataset.hidden !== 'true';
-    panel.dataset.hidden = nowHidden ? 'true' : 'false';
-    panel.style.display  = nowHidden ? 'none' : 'flex';
-    savePanelHiddenState(nowHidden);
-  };
-}
-
-/*──── shouldExpandField (unchanged) ─────────────────────────────*/
 function shouldExpandField(type, field) {
-  return !fieldVisibility[type] || fieldVisibility[type][field];
+  return !window.fieldVisibility[type] || window.fieldVisibility[type][field];
 }
 
-/*──── updateEdgesByField (unchanged, plus persistence) ─────────*/
 function updateEdgesByField(type, field, visible) {
-  const allEdges = network.body.data.edges.get();
-  for (const edge of allEdges) {
-    const fromNode = network.body.data.nodes.get(edge.from);
-    const fromId   = fromNode?.sourceId || fromNode?.id;
-    const match =
-      edge.label === field && fullData[fromId]?.__meta?.type === type;
-    if (match) {
-      visible
-        ? network.body.data.edges.add(edge)
-        : network.body.data.edges.remove(edge.id);
+  var allEdges = network.body.data.edges.get();
+  allEdges.forEach(function(edge) {
+    var fromNode = network.body.data.nodes.get(edge.from);
+    var fromId = fromNode && (fromNode.sourceId || fromNode.id);
+    if (
+      edge.label === field &&
+      window.fieldVisibility[type] &&
+      fullData[fromId] &&
+      fullData[fromId].__meta &&
+      fullData[fromId].__meta.type === type
+    ) {
+      if (visible) {
+        network.body.data.edges.add(edge);
+      } else {
+        network.body.data.edges.remove(edge.id);
+      }
     }
-  }
-  saveFieldState();
+  });
 }
 
-/*──── buildFieldPanel (column width + gap adjusted) ─────────────*/
 function buildFieldPanel(data) {
-  const panel = document.getElementById('field-controls');
+  var panel = document.getElementById('field-controls');
   if (!panel) return;
 
-  /* one-time setup */
-  if (!panel.dataset.initialised) {
-    loadSavedState();
-    if (localStorage.getItem(LS_KEY_HIDDEN) === '1') {
-      panel.dataset.hidden = 'true';
-      panel.style.display  = 'none';
-    }
-    panel.dataset.initialised = 'true';
-  }
-  ensureToggleButton(panel);
+  // Hide panel initially
+  panel.style.display = 'none';
 
-  const hidden = panel.dataset.hidden === 'true';
-  panel.innerHTML      = '';
-  panel.style.fontSize = '0.8em';
-  panel.style.display  = hidden ? 'none' : 'flex';
-  panel.style.flexWrap = 'wrap';
+  // Clear existing content and set up flex layout
+  panel.innerHTML = '';
+  panel.style.fontSize   = '0.8em';
+  panel.style.display    = 'none'; // remain hidden until toggled
+  panel.style.flexWrap   = 'wrap';
   panel.style.alignItems = 'flex-start';
-  panel.style.gap        = '0.8rem';   // narrower gap
+  panel.style.gap        = '0.8rem';
 
-  /* gather type → fieldsWithRefs */
-  const typeFields = {};
-  for (const obj of Object.values(data)) {
-    const type = obj.__meta?.type;
-    if (!type) continue;
-    typeFields[type] ??= new Set();
-    for (const [key, val] of Object.entries(obj)) {
-      if (key === '__meta') continue;
-      const hasRef =
+  // Gather fields that contain __ref for each type
+  var typeFields = {};
+  Object.values(data).forEach(function(obj) {
+    var type = obj.__meta && obj.__meta.type;
+    if (!type) return;
+    if (!typeFields[type]) typeFields[type] = new Set();
+
+    Object.keys(obj).forEach(function(key) {
+      if (key === '__meta') return;
+      var val = obj[key];
+      var hasRef =
         (Array.isArray(val) &&
-          val.some(v => v && typeof v === 'object' && '__ref' in v)) ||
+          val.some(function(item) { return item && typeof item === 'object' && '__ref' in item; })) ||
         (val && typeof val === 'object' && '__ref' in val);
       if (hasRef) typeFields[type].add(key);
-    }
-  }
-
-  /* build columns */
-  for (const [type, fields] of Object.entries(typeFields)) {
-    fieldVisibility[type] ??= {};
-
-    const col = document.createElement('div');
-    Object.assign(col.style, {
-      minWidth: '90px',     // ← narrower
-      maxWidth: '110px',    // ← narrower
-      flexShrink: '0'
     });
+  });
 
-    const header = document.createElement('div');
-    header.textContent = type;
-    Object.assign(header.style, {
-      fontWeight: 'bold',
-      marginBottom: '0.3em'
-    });
-    col.appendChild(header);
+  // For each type, create a column with its fields as checkboxes
+  Object.entries(typeFields).forEach(function(entry) {
+    var type  = entry[0];
+    var fields = Array.from(entry[1]).sort();
+    window.fieldVisibility[type] = {};
 
-    const ul = document.createElement('ul');
-    Object.assign(ul.style, {
-      listStyle: 'none',
-      padding: '0',
-      margin: '0'
-    });
-    col.appendChild(ul);
+    var column = document.createElement('div');
+    column.style.minWidth   = '90px';
+    column.style.maxWidth   = '110px';
+    column.style.flexShrink = '0';
 
-    [...fields].sort().forEach(field => {
-      fieldVisibility[type][field] ??= true;
+    var header = document.createElement('div');
+    header.textContent      = type;
+    header.style.fontWeight = 'bold';
+    header.style.marginBottom = '0.3em';
+    column.appendChild(header);
 
-      const li = document.createElement('li');
+    var ul = document.createElement('ul');
+    ul.style.listStyle = 'none';
+    ul.style.padding   = '0';
+    ul.style.margin    = '0';
+    column.appendChild(ul);
+
+    fields.forEach(function(field) {
+      window.fieldVisibility[type][field] = true;
+
+      var li = document.createElement('li');
       li.style.marginTop = '0.35em';
 
-      const label = document.createElement('label');
+      var label = document.createElement('label');
       label.style.cursor = 'pointer';
 
-      const input = document.createElement('input');
+      var input = document.createElement('input');
       input.type    = 'checkbox';
-      input.checked = fieldVisibility[type][field];
-      input.onchange = () => {
-        fieldVisibility[type][field] = input.checked;
+      input.checked = true;
+      input.onchange = function() {
+        window.fieldVisibility[type][field] = input.checked;
         updateEdgesByField(type, field, input.checked);
       };
 
@@ -176,9 +115,11 @@ function buildFieldPanel(data) {
       ul.appendChild(li);
     });
 
-    panel.appendChild(col);
-  }
-
-  /* save defaults (first render) */
-  saveFieldState();
+    panel.appendChild(column);
+  });
 }
+
+// Expose globally
+window.shouldExpandField = shouldExpandField;
+window.updateEdgesByField = updateEdgesByField;
+window.buildFieldPanel = buildFieldPanel;
