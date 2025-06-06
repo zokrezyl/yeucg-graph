@@ -30,7 +30,7 @@
   if (!fieldsBtn) {
     fieldsBtn = document.createElement('button');
     fieldsBtn.id = 'fields-btn';
-    fieldsBtn.textContent = 'Fields';
+    fieldsBtn.textContent = 'show field options';
     Object.assign(fieldsBtn.style, {
       padding: '4px 8px',
       fontSize: '0.9em',
@@ -44,7 +44,7 @@
   if (!deleteBtn) {
     deleteBtn = document.createElement('button');
     deleteBtn.id = 'delete-btn';
-    deleteBtn.textContent = 'Delete';
+    deleteBtn.textContent = 'Delete orphan nodes';
     Object.assign(deleteBtn.style, {
       padding: '4px 8px',
       fontSize: '0.9em',
