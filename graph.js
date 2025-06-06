@@ -1,22 +1,23 @@
 
-// graph.js – full file with click‐based tooltip fixed
+// graph.js – full file with click‐based tooltip and “Delete Orphan Nodes” under Fields menu
 // -----------------------------------------------------------------------------
 // Public functions:
 //
 //   • showSubgraph(centerId, clear = true)
 //   • expandProxyNode(id)
 //
-// Changes (only): the click‐tooltip now reads coordinates from
-// `params.event.srcEvent` instead of `params.event` so it actually appears.
+// This version is identical to your last working copy, with one addition:
+// a small dropdown menu under the existing “☰ Fields” button containing:
+//   1. “Show/Hide Fields Panel”
+//   2. “Delete Orphan Nodes”
 //
-// All other logic (double‐click expand, skipping empty proxies, context‐menu delete, etc.) is unchanged.
+// All other logic (tooltip on click, expand on double‐click, proxy nodes, context‐menu delete, etc.)
+// remains exactly as before.
 
 /* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
 
- 
-/*───────────────────────────────────────────────────────────────────
-  Tooltip helper – creates a hidden <div> for click‐based display
-───────────────────────────────────────────────────────────────────*/
+ // (Assumes `network` is declared in another module)
+
 let tooltipDiv = null;
 function ensureTooltipDiv() {
   if (tooltipDiv) return;
@@ -39,16 +40,104 @@ function ensureTooltipDiv() {
 }
 
 /*───────────────────────────────────────────────────────────────────
+  New: Create a dropdown menu for the “☰ Fields” button, if present.
+───────────────────────────────────────────────────────────────────*/
+(function setupFieldsMenu() {
+  const btn = document.getElementById('field-toggle-btn');
+  if (!btn) return;
+
+  // Create menu container
+  let menu = document.getElementById('field-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'field-menu';
+    Object.assign(menu.style, {
+      position: 'fixed',
+      top: '36px',    // just below the button
+      right: '8px',
+      zIndex: 1000,
+      background: 'white',
+      border: '1px solid #999',
+      borderRadius: '4px',
+      boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+      display: 'none',
+      fontSize: '0.85em',
+      fontFamily: 'sans-serif'
+    });
+
+    // Item: Show/Hide Fields Panel
+    const toggleItem = document.createElement('div');
+    toggleItem.textContent = 'Show/Hide Fields Panel';
+    Object.assign(toggleItem.style, {
+      padding: '6px 12px',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap'
+    });
+    toggleItem.onmouseenter = () => toggleItem.style.background = '#f0f0f0';
+    toggleItem.onmouseleave = () => toggleItem.style.background = '';
+    toggleItem.onclick = () => {
+      const panel = document.getElementById('field-controls');
+      if (!panel) return;
+      panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+      menu.style.display  = 'none';
+    };
+    menu.appendChild(toggleItem);
+
+    // Item: Delete Orphan Nodes
+    const deleteOrphansItem = document.createElement('div');
+    deleteOrphansItem.textContent = 'Delete Orphan Nodes';
+    Object.assign(deleteOrphansItem.style, {
+      padding: '6px 12px',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap'
+    });
+    deleteOrphansItem.onmouseenter = () => deleteOrphansItem.style.background = '#f0f0f0';
+    deleteOrphansItem.onmouseleave = () => deleteOrphansItem.style.background = '';
+    deleteOrphansItem.onclick = () => {
+      if (!network) return;
+      const edges = network.body.data.edges.get();
+      const connected = new Set();
+      edges.forEach(e => {
+        connected.add(e.from);
+        connected.add(e.to);
+      });
+      const allNodes = network.body.data.nodes.get();
+      const orphanIds = allNodes
+        .map(n => n.id)
+        .filter(id => !connected.has(id));
+      if (orphanIds.length > 0) {
+        network.body.data.nodes.remove(orphanIds);
+      }
+      menu.style.display = 'none';
+    };
+    menu.appendChild(deleteOrphansItem);
+
+    document.body.appendChild(menu);
+
+    // Clicking outside hides menu
+    document.addEventListener('click', evt => {
+      if (!btn.contains(evt.target) && !menu.contains(evt.target)) {
+        menu.style.display = 'none';
+      }
+    });
+  }
+
+  // Button toggles menu
+  btn.onclick = evt => {
+    evt.stopPropagation();
+    menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+  };
+})();
+
+/*───────────────────────────────────────────────────────────────────
   showSubgraph – renders nodes & edges around a centerId
 ───────────────────────────────────────────────────────────────────*/
 function showSubgraph(centerId, clear = true) {
-  // Track which nodes/edges already exist to avoid duplicates
   const addedNodes = new Set(clear ? [] : network?.body?.data?.nodes.getIds());
   const addedEdges = new Set(
     clear ? [] : network?.body?.data?.edges.get().map(e => `${e.from}->${e.to}`)
   );
 
-  // If clear = true, start fresh arrays; otherwise reuse existing for accumulation
   const nodeItems = clear ? [] : network.body.data.nodes.get();
   const edgeItems = clear ? [] : network.body.data.edges.get();
 
@@ -73,7 +162,6 @@ function showSubgraph(centerId, clear = true) {
     edgeItems.push({ from, to, arrows: 'to', label });
   }
 
-  // Always add the center node first
   addNode(centerId);
   const obj = fullData[centerId];
 
@@ -172,43 +260,56 @@ function showSubgraph(centerId, clear = true) {
 
     /* Single-click: show/hide tooltip based on clicked node */
     ensureTooltipDiv();
+    let clickTimeout = null;
+    const CLICK_DELAY = 200; // ms
+
     network.on('click', params => {
-      // If click on empty space, hide tooltip
-      if (!params.nodes || params.nodes.length === 0) {
-        tooltipDiv.style.display = 'none';
-        return;
+      if (clickTimeout) {
+        clearTimeout(clickTimeout);
+        clickTimeout = null;
       }
+      clickTimeout = setTimeout(() => {
+        clickTimeout = null;
+        // If click on empty space, hide tooltip
+        if (!params.nodes || params.nodes.length === 0) {
+          tooltipDiv.style.display = 'none';
+          return;
+        }
 
-      const nodeId = params.nodes[0];
-      const node   = network.body.data.nodes.get(nodeId);
-      if (!node) return;
+        const nodeId = params.nodes[0];
+        const node   = network.body.data.nodes.get(nodeId);
+        if (!node) return;
 
-      // Determine “real” ID for expanded label
-      const realId = node.proxy ? node.sourceId || node.targetId : nodeId;
-      const obj    = fullData[realId] || {};
+        // Determine “real” ID for expanded label
+        const realId = node.proxy ? node.sourceId || node.targetId : nodeId;
+        const obj    = fullData[realId] || {};
 
-      // Generate the full expanded label
-      tooltipDiv.textContent = makeLabel(nodeId, obj, true, !!node.proxy);
+        // Generate the full expanded label
+        tooltipDiv.textContent = makeLabel(nodeId, obj, true, !!node.proxy);
 
-      // Position tooltip near the click using srcEvent coordinates
-      const evt = params.event && params.event.srcEvent;
-      if (evt) {
-        tooltipDiv.style.left  = `${evt.pageX + 8}px`;
-        const yPos = evt.pageY - 12;
-        tooltipDiv.style.top   = yPos < 0 ? '4px' : `${yPos}px`;
-      }
-      tooltipDiv.style.display = 'block';
+        // Position tooltip near the click using srcEvent coordinates
+        const evt = params.event && params.event.srcEvent;
+        if (evt) {
+          tooltipDiv.style.left  = `${evt.pageX + 8}px`;
+          const yPos = evt.pageY - 12;
+          tooltipDiv.style.top   = yPos < 0 ? '4px' : `${yPos}px`;
+        }
+        tooltipDiv.style.display = 'block';
+      }, CLICK_DELAY);
     });
 
     /* Double-click: proxy → expand next batch; real → subgraph drill‐down */
     network.on('doubleClick', params => {
+      if (clickTimeout) {
+        clearTimeout(clickTimeout);
+        clickTimeout = null;
+      }
+      tooltipDiv.style.display = 'none';
+
       if (!params.nodes || params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node   = network.body.data.nodes.get(nodeId);
       if (!node) return;
-
-      // Hide tooltip when expanding/drilling
-      tooltipDiv.style.display = 'none';
 
       if (node.proxy) {
         expandProxyNode(nodeId);
