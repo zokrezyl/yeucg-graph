@@ -1,5 +1,5 @@
 
-// graph.js – full file, single-click now expands / drills-down
+// graph.js – full file with click vs. double-click behavior swapped
 // -----------------------------------------------------------------------------
 // Public functions:
 //
@@ -7,15 +7,13 @@
 //   • expandProxyNode(id)
 //
 // Changes in this version:
-//   • 'click' handler now does what 'doubleClick' did:
+//   • 'click' handler does not expand or drill-down—the hover tooltip remains the only click effect.
+//   • 'doubleClick' handler now handles expansion:
 //       • proxy node  → expandProxyNode()
 //       • real node   → showSubgraph(nodeId, false)
-//   • 'doubleClick' handler disabled to avoid duplicate actions.
-//   • Removed label-toggle-on-click logic.
-//
-// Hover tooltip logic and all previous fixes remain.
 
-/* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
+ /* global vis, fullData, fieldVisibility, shouldExpandField, makeLabel, getTypeColor */
+
 
 
 /*───────────────────────────────────────────────────────────────────
@@ -43,7 +41,7 @@ function ensureTooltipDiv() {
 }
 
 /*───────────────────────────────────────────────────────────────────
-  showSubgraph – unchanged except earlier tweaks (skip empty arrays)
+  showSubgraph – renders nodes & edges around a centerId
 ───────────────────────────────────────────────────────────────────*/
 function showSubgraph(centerId, clear = true) {
   const addedNodes = new Set(clear ? [] : network?.body?.data?.nodes.getIds());
@@ -83,6 +81,7 @@ function showSubgraph(centerId, clear = true) {
     if (!shouldExpandField(obj.__meta?.type, key)) continue;
 
     if (Array.isArray(val)) {
+      // Build list of __ref targets; skip if empty
       const allRefs = val
         .filter(v => v && typeof v === 'object' && '__ref' in v)
         .map(v => v.__ref);
@@ -124,7 +123,7 @@ function showSubgraph(centerId, clear = true) {
     }
   }
 
-  /*── incoming references – unchanged ──────────────────────────*/
+  /*── incoming references ──────────────────────────────────────*/
   const incoming = obj.__meta?.incoming || [];
   if (incoming.length > THRESHOLD) {
     const virtualId = `${centerId}::incoming`;
@@ -170,13 +169,13 @@ function showSubgraph(centerId, clear = true) {
       }
     );
 
-    /* double-click (disabled to prevent duplicate action) */
-    network.on('doubleClick', () => {
-      /* intentionally left blank */
+    /* single-click – no expand/drill-down; tooltip is on hover only */
+    network.on('click', () => {
+      // Intentionally empty: click no longer expands or drills down.
     });
 
-    /* SINGLE click – now handles expand/drill-down */
-    network.on('click', params => {
+    /* double-click – expand or drill-down */
+    network.on('doubleClick', params => {
       if (params.nodes.length === 0) return;
       const nodeId = params.nodes[0];
       const node   = network.body.data.nodes.get(nodeId);
@@ -189,7 +188,7 @@ function showSubgraph(centerId, clear = true) {
       }
     });
 
-    /* hover tool-tip – unchanged */
+    /* hover – show tooltip with expanded label */
     ensureTooltipDiv();
     network.on('hoverNode', params => {
       const nodeId = params.node;
@@ -207,7 +206,7 @@ function showSubgraph(centerId, clear = true) {
       tooltipDiv.style.display = 'none';
     });
 
-    /* right-click remove node – unchanged */
+    /* right-click – remove node (unchanged) */
     network.on('oncontext', params => {
       const pointer = network.getNodeAt(params.pointer.DOM);
       if (!pointer) return;
